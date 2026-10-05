@@ -1,6 +1,9 @@
 import SensorCard from './SensorCard'
-import { GAS_UNIT } from '../config'
+import SensorChart from './SensorChart'
+import PresenceTimeline from './PresenceTimeline'
+import { GAS_UNIT, THRESHOLDS } from '../config'
 import { getSensorStatus } from '../utils/status'
+import { formatTime } from '../utils/format'
 
 const SENSORS = [
   {
@@ -32,12 +35,16 @@ const SENSORS = [
   },
 ]
 
-export default function SensorGrid({ data }) {
+export default function SensorGrid({ data, history }) {
+  const chartData = history.map((point) => ({ ...point, time: formatTime(point.timestamp) }))
+
   return (
     <section className="sensor-grid" aria-label="Sensors">
       {SENSORS.map((sensor) => {
         const value = data ? data[sensor.key] : null
         const hasValue = value !== null && value !== undefined
+        const status = getSensorStatus(sensor.key, value)
+
         return (
           <SensorCard
             key={sensor.key}
@@ -45,8 +52,21 @@ export default function SensorGrid({ data }) {
             source={sensor.source}
             value={hasValue ? sensor.format(value) : '--'}
             unit={hasValue ? sensor.unit : null}
-            status={getSensorStatus(sensor.key, value)}
-          />
+            status={status}
+          >
+            {sensor.key === 'motion' ? (
+              <PresenceTimeline history={history} />
+            ) : (
+              <SensorChart
+                label={sensor.label}
+                data={chartData}
+                dataKey={sensor.key}
+                unit={sensor.unit}
+                status={status}
+                threshold={THRESHOLDS[sensor.key].warning}
+              />
+            )}
+          </SensorCard>
         )
       })}
     </section>
