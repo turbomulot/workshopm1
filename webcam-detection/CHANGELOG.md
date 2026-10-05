@@ -20,7 +20,11 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 ## [Non publié]
 
 ### Ajouté
-- (rien pour l'instant)
+- `stream_detection.py` : serveur Flask qui diffuse la caméra avec détection YOLO (`/video`), l'état courant (`/status`) et le journal des événements (`/logs`).
+- Détection exécutée en arrière-plan (thread), indépendante des visiteurs de la page.
+- Journal limité à 50 entrées, une ligne seulement quand l'état change (intrusion détectée, zone libre).
+- Autorisation CORS pour que le frontend puisse lire les réponses.
+- `requirements.txt` : liste des dépendances Python du projet.
 
 ### Modifié
 - (rien pour l'instant)
