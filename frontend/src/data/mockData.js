@@ -8,7 +8,7 @@ import { getSensorStatus } from '../utils/status'
 const ALERT_MESSAGES = {
   temperature: { warning: 'Temperature anomaly', critical: 'Critical temperature reached' },
   humidity: { warning: 'High humidity level', critical: 'Critical humidity level' },
-  gas: { warning: 'Gas level rising', critical: 'High gas level detected' },
+  gas: { warning: 'Abnormal gas level', critical: 'High gas level detected' },
   motion: { critical: 'Motion detected' },
 }
 
