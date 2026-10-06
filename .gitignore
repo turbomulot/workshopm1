@@ -1,0 +1,40 @@
+# ---------- Environnement virtuel Python ----------
+venv/
+.venv/
+env/
+
+# ---------- Fichiers générés par Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---------- SECRETS (ne jamais versionner : exigé par le sujet) ----------
+.env
+*.pem
+*.key
+*.crt
+secrets.*
+
+# ---------- Modèles IA lourds (téléchargés automatiquement) ----------
+*.pt
+*.onnx
+runs/
+
+# ---------- Données volumineuses ----------
+# Décommente ces lignes si vos datasets sont trop gros pour Git :
+# data/raw/
+# *.csv
+
+# ---------- Logs ----------
+*.log
+logs/
+
+# ---------- macOS ----------
+.DS_Store
+.AppleDouble
+._*
+
+# ---------- Éditeurs ----------
+.vscode/
+.idea/
