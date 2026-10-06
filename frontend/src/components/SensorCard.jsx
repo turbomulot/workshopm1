@@ -4,6 +4,7 @@ const STATUS_LABELS = {
   normal: 'Normal',
   warning: 'Warning',
   critical: 'Critical',
+  offline: 'No data',
 }
 
 // children : visualisation affichée sous la valeur (graphique, timeline...).

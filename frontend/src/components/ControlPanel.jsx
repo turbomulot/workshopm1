@@ -1,11 +1,14 @@
 import { useState } from 'react'
 
+// on : true / false, ou undefined tant que l'état de l'actionneur est inconnu.
 function Indicator({ label, on }) {
+  const state = on ? 'ON' : 'OFF'
+
   return (
     <div className="control__indicator">
       <span className={`control__lamp ${on ? 'control__lamp--on' : ''}`} />
       <span>{label}</span>
-      <strong>{on ? 'ON' : 'OFF'}</strong>
+      <strong>{on === undefined ? '--' : state}</strong>
     </div>
   )
 }
@@ -47,9 +50,9 @@ export default function ControlPanel({ actuators, onCommand, disabled = false })
       </div>
 
       <div className="control__indicators">
-        <Indicator label="Buzzer" on={Boolean(state.buzzer)} />
-        <Indicator label="Green LED" on={Boolean(state.ledGreen)} />
-        <Indicator label="Red LED" on={Boolean(state.ledRed)} />
+        <Indicator label="Buzzer" on={state.buzzer} />
+        <Indicator label="Green LED" on={state.ledGreen} />
+        <Indicator label="Red LED" on={state.ledRed} />
       </div>
 
       <div className="control__buttons">

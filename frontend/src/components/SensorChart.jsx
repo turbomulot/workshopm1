@@ -17,6 +17,7 @@ const LINE_COLORS = {
   normal: '#14161a',
   warning: '#d9860a',
   critical: '#e5382d',
+  offline: '#a9acb3',
 }
 
 export default function SensorChart({ label, data, dataKey, unit, status = 'normal', threshold }) {

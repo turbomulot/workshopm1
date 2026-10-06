@@ -3,25 +3,34 @@ import { getAIStatus } from '../utils/status'
 import { formatTime } from '../utils/format'
 
 export default function AIDetection({ detection }) {
-  const status = getAIStatus(detection)
+  // detection vaut null tant que le service IA ne répond pas.
+  const available = Boolean(detection)
+  const status = available ? getAIStatus(detection) : 'offline'
   const human = Boolean(detection?.humanDetected)
-  const confidence = detection ? Math.round(detection.confidence * 100) : 0
+  // La confiance n'est connue que lorsqu'une personne est en vue.
+  const hasConfidence = available && detection.confidence !== null && detection.confidence !== undefined
+  const confidence = hasConfidence ? Math.round(detection.confidence * 100) : 0
+  const badge = human ? 'Human detected' : 'No threat'
 
   return (
     <section className="panel ai" data-status={status}>
       <div className="panel__header">
         <h2 className="panel__title">AI detection</h2>
-        <StatusBadge status={status} label={human ? 'Human detected' : 'No threat'} />
+        <StatusBadge status={status} label={available ? badge : 'Unavailable'} />
       </div>
 
       <dl className="ai__rows">
         <div className="ai__row">
           <dt>Human detected</dt>
-          <dd>{human ? 'YES' : 'NO'}</dd>
+          <dd>{available ? (human ? 'YES' : 'NO') : '--'}</dd>
+        </div>
+        <div className="ai__row">
+          <dt>People in view</dt>
+          <dd>{detection?.people ?? '--'}</dd>
         </div>
         <div className="ai__row">
           <dt>Confidence</dt>
-          <dd>{confidence}%</dd>
+          <dd>{hasConfidence ? `${confidence}%` : '--'}</dd>
         </div>
         <div className="ai__row">
           <dt>Threat level</dt>

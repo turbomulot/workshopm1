@@ -43,7 +43,7 @@ export default function SensorGrid({ data, history }) {
       {SENSORS.map((sensor) => {
         const value = data ? data[sensor.key] : null
         const hasValue = value !== null && value !== undefined
-        const status = getSensorStatus(sensor.key, value)
+        const status = hasValue ? getSensorStatus(sensor.key, value) : 'offline'
 
         return (
           <SensorCard

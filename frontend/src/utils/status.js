@@ -47,7 +47,11 @@ export function getIssues(latest, detection) {
 
   const aiStatus = getAIStatus(detection)
   if (aiStatus !== 'normal') {
-    issues.push({ key: 'ai', status: aiStatus, message: 'Human seen on camera' })
+    const message = detection.people > 1 ? `${detection.people} people seen on camera` : 'Human seen on camera'
+    issues.push({ key: 'ai', status: aiStatus, message })
+  }
+  if (detection?.cameraOnline === false) {
+    issues.push({ key: 'camera', status: 'warning', message: 'Camera is offline' })
   }
 
   return issues.sort((a, b) => SEVERITY[b.status] - SEVERITY[a.status])

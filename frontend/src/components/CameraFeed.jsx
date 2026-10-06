@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 
 // streamUrl : URL d'un flux MJPEG (ou d'une image) servi par le backend / script IA.
-export default function CameraFeed({ streamUrl }) {
+// online : la caméra envoie des images. Quand elle revient, le flux est rechargé.
+export default function CameraFeed({ streamUrl, online = true }) {
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     setFailed(false)
-  }, [streamUrl])
+  }, [streamUrl, online])
 
-  const live = Boolean(streamUrl) && !failed
+  const live = Boolean(streamUrl) && online && !failed
 
   return (
     <section className="panel camera">

@@ -18,19 +18,19 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard">
-      <Header device={device} lastUpdate={latest?.timestamp} />
+      <Header device={device} lastUpdate={latest?.timestamp || detection?.timestamp} />
 
       <main className="layout">
         <div className="layout__main">
-          <StatusHero status={globalStatus} issues={issues} />
+          <StatusHero status={globalStatus} issues={issues} hasSensors={Boolean(latest)} />
           <SensorGrid data={latest} history={history} />
           <AlertList alerts={alerts} />
         </div>
 
         <aside className="layout__side">
-          <CameraFeed streamUrl={CAMERA_STREAM_URL} />
+          <CameraFeed streamUrl={CAMERA_STREAM_URL} online={Boolean(detection?.cameraOnline)} />
           <AIDetection detection={detection} />
-          <ControlPanel actuators={device?.actuators} onCommand={runCommand} disabled={!connected} />
+          <ControlPanel actuators={device?.actuators} onCommand={runCommand} disabled={!device} />
         </aside>
       </main>
     </div>

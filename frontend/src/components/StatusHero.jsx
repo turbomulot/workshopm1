@@ -5,7 +5,7 @@ const STATUS_LABELS = {
   offline: 'OFFLINE',
 }
 
-function getMessage(status, issues) {
+function getMessage(status, issues, hasSensors) {
   if (status === 'offline') {
     return {
       headline: 'Connection lost.',
@@ -15,7 +15,9 @@ function getMessage(status, issues) {
   if (issues.length === 0) {
     return {
       headline: 'All clear.',
-      detail: 'Every sensor is within its normal range.',
+      detail: hasSensors
+        ? 'Every sensor is within its normal range.'
+        : 'No one on camera. Sensors are not connected yet.',
     }
   }
   const [main, ...others] = issues
@@ -28,8 +30,8 @@ function getMessage(status, issues) {
 }
 
 // Bandeau principal : résume l'état du site en une phrase.
-export default function StatusHero({ status, issues }) {
-  const { headline, detail } = getMessage(status, issues)
+export default function StatusHero({ status, issues, hasSensors = true }) {
+  const { headline, detail } = getMessage(status, issues, hasSensors)
 
   return (
     <section className="hero" data-status={status} aria-live="polite">
