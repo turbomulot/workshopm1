@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 // streamUrl : URL d'un flux MJPEG (ou d'une image) servi par le backend / script IA.
 export default function CameraFeed({ streamUrl }) {
   const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     setFailed(false)
@@ -23,6 +24,7 @@ export default function CameraFeed({ streamUrl }) {
       <div className="camera__frame">
         {live ? (
           <img
+            key={attempt}
             className="camera__stream"
             src={streamUrl}
             alt="Sentinel-X camera stream"
@@ -34,6 +36,7 @@ export default function CameraFeed({ streamUrl }) {
             <p className="camera__placeholder-text">
               {streamUrl ? 'The stream is unreachable.' : 'Waiting for the camera stream.'}
             </p>
+            {streamUrl && <button type="button" onClick={() => { setAttempt((value) => value + 1); setFailed(false) }}>Réessayer le flux</button>}
           </div>
         )}
       </div>

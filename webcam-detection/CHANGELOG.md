@@ -20,6 +20,11 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 ## [Non publié]
 
 ### Ajouté
+- Registre employés SQLite, photos facultatives, badges QR téléchargeables, désactivation et renouvellement (`badges.py`).
+- Routes employés/badges protégées par une clé superviseur locale ; historique des validations avec anti-répétition de 5 secondes.
+- Lecture de plusieurs QR et annotation du nom associé au badge uniquement lorsque l'association spatiale est claire (`qr_vision.py`).
+- Page React « Employés & badges » et proxy Vite `/access-api`, indépendants du backend capteurs.
+- Guide de transmission `docs/REPRISE_DEV_WEB_BADGES.md` et huit tests automatisés avec données temporaires.
 - `stream_detection.py` : serveur Flask qui diffuse la caméra avec détection YOLO (`/video`), l'état courant (`/status`) et le journal des événements (`/logs`).
 - Détection exécutée en arrière-plan (thread), indépendante des visiteurs de la page.
 - Journal limité à 50 entrées, une ligne seulement quand l'état change (intrusion détectée, zone libre).
@@ -27,10 +32,21 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 - `requirements.txt` : liste des dépendances Python du projet.
 
 ### Modifié
-- (rien pour l'instant)
+- Le serveur caméra écoute sur localhost par défaut et limite les origines CORS configurées.
+- Le journal serveur indique une présence plutôt qu'une intrusion automatique ; les noms ne persistent pas après disparition du QR.
+- Capture à résolution demandée 1280x720 pour la lecture QR ; analyse YOLO maintenue à 640x480, mesure supplémentaire du traitement complet.
+- Une URL caméra explicite est utilisable sur Supervision avec les capteurs simulés.
+- Fluidité : suppression de la limite à 10 FPS, acquisition continue dans un tampon d'une image, flux réveillé à chaque publication (30 FPS maximum), JPEG qualité 80 et lecture QR allégée avec fallback limité à 2 Hz.
+- Cadence réelle `fps`, durée d'analyse et âge de l'image exposés pour distinguer fluidité et latence YOLO.
 
 ### Corrigé
-- (rien pour l'instant)
+- Compatibilité NumPy/Python 3.13 et sélection du backend caméra Windows/macOS.
+- Reconnexion caméra, invalidation des images périmées, libération à l'arrêt et import sans démarrage automatique.
+
+### Vérifications du 6 octobre 2026
+- Huit tests badges/associations réussis ; compilation frontend et `pip check` réussis.
+- Après optimisation : dix tests réussis, dont conversion des coordonnées QR, abandon des captures anciennes et absence de pause de 100 ms ; nouvelle compilation réussie. Flux HTTP observé à environ 18 images/s contre 9 auparavant, sur des mesures courtes.
+- Serveur réel et proxy répondent ; caméra connectée. Parcours navigateur et présentation de badges physiques à confirmer manuellement.
 
 ---
 

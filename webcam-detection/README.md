@@ -1,6 +1,14 @@
 # Sentinel-X — Vision par ordinateur (webcam-detection)
 
 Module de **vision intelligente** du projet Sentinel-X (filière IA & Data).
+
+## Ajout du registre employés et badges QR
+
+Le serveur intègre maintenant les fiches employés, la génération/validation des QR et une association visuelle prudente entre badge et rectangle de personne. Le nom ne reste affiché que lorsque le QR est visible et associé sans ambiguïté. La photo de la fiche n'est utilisée pour aucune reconnaissance faciale.
+
+Voir [le guide de reprise DEV web](../docs/REPRISE_DEV_WEB_BADGES.md) pour le contrat API complet, la clé superviseur, le lancement et les tests. Les données sont stockées dans `.data/`, ignoré par Git. Le serveur écoute sur `127.0.0.1` par défaut ; les routes nominatives sont protégées par la clé locale.
+
+Le journal de présence du serveur indique désormais « présence détectée », sans assimiler automatiquement une personne à un intrus. La capture demande 1280 x 720 pour lire les QR puis redimensionne à 640 x 480 pour YOLO. L'état ajoute le temps de traitement complet, la connexion caméra et un horodatage ; l'état badges est disponible sur la route protégée `/api/v1/access/status`.
 Il lit le flux d'une webcam, détecte la présence d'une personne avec **YOLOv8n**, et expose le résultat à l'équipe frontend via un petit serveur web.
 
 ## Sommaire
@@ -60,6 +68,19 @@ pip install -r webcam-detection/requirements.txt
 ```
 
 L'installation peut durer plusieurs minutes : PyTorch (embarqué par `ultralytics`) est volumineux.
+
+**Windows (PowerShell)** : depuis la racine du dépôt, sans activer l'environnement :
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r webcam-detection/requirements.txt
+cd webcam-detection
+..\.venv\Scripts\python.exe test_webcam.py
+# Pour lancer le serveur à la place du test :
+..\.venv\Scripts\python.exe stream_detection.py
+```
+
+Le fichier de dépendances sélectionne NumPy 2.2.6 pour Python 3.13 et plus, et conserve NumPy 2.0.2 pour les versions précédentes.
 
 **Mac :** à la première utilisation, macOS demande l'accès à la caméra pour le terminal (ou VS Code). Accepte, ou active-le dans *Réglages Système → Confidentialité et sécurité → Caméra*.
 
@@ -184,7 +205,7 @@ Les réglages se trouvent en tête des scripts.
 
 **Utiliser la webcam USB** au lieu de la caméra intégrée : remplace `0` par `1` (ou `2`) dans `cv2.VideoCapture(...)`.
 
-**Linux / Windows :** `cv2.CAP_AVFOUNDATION` est spécifique à macOS. Utilise simplement `cv2.VideoCapture(0)`.
+Les scripts sélectionnent automatiquement `cv2.CAP_AVFOUNDATION` sur macOS et `cv2.CAP_ANY` sur Windows / Linux.
 
 Le port **5001** est choisi volontairement : sur macOS, le port 5000 est déjà pris par AirPlay.
 
@@ -213,7 +234,7 @@ Ces chiffres sont à **revalider sur la machine finale**. Si le groupe retient l
 
 ## 9. Sécurité
 
-- Le serveur de développement Flask **n'a aucune authentification** et accepte les requêtes de n'importe quelle origine (`Access-Control-Allow-Origin: *`). À utiliser uniquement sur un réseau de confiance (réseau de la table) et à couper pendant le pentest.
+- Le serveur est un prototype local : les routes employés/badges sont protégées par une clé superviseur, mais `/video`, `/status` et `/logs` restent accessibles sans clé. Le flux vidéo peut contenir des noms de badges. Le serveur écoute uniquement sur localhost par défaut et le CORS est limité aux origines frontend configurées. Ajouter authentification du flux et HTTPS avant tout accès réseau.
 - Aucun secret, mot de passe ou clé ne doit être écrit dans le code : ils vont dans un fichier `.env`, ignoré par Git.
 - À terme, le flux doit transiter par la couche chiffrée mise en place par l'équipe CYBER (HTTPS / TLS).
 
