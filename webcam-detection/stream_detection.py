@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from collections import deque
@@ -9,7 +10,11 @@ from ultralytics import YOLO
 
 app = Flask(__name__)
 modele = YOLO("yolov8n.pt")
-camera = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+
+# AVFoundation n'existe que sur Mac : sous Windows on passe par DirectShow,
+# ailleurs on laisse OpenCV choisir.
+BACKENDS_CAMERA = {"darwin": cv2.CAP_AVFOUNDATION, "win32": cv2.CAP_DSHOW}
+camera = cv2.VideoCapture(0, BACKENDS_CAMERA.get(sys.platform, cv2.CAP_ANY))
 
 # --- Réglages ---
 DELAI_LOG = 5            # secondes entre deux logs tant que quelqu'un est présent
