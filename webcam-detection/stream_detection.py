@@ -11,11 +11,15 @@ app = Flask(__name__)
 modele = YOLO("yolov8n.pt")
 camera = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
 
+# --- Réglages ---
+DELAI_LOG = 5            # secondes entre deux logs tant que quelqu'un est présent
+
 # --- Ce que le gardien met à jour, et que le serveur web lit ---
 etat = {"detection": False, "personnes": 0, "latence_ms": 0, "heure": ""}
 logs = deque(maxlen=50)          # le journal : garde les 50 derniers événements
 derniere_image = None            # la dernière image JPEG prête à être envoyée
 verrou = threading.Lock()        # évite que deux threads touchent l'image en même temps
+derniere_ecriture = 0            # heure du dernier log de présence
 
 
 def ecrire_log(niveau, message):
@@ -32,7 +36,7 @@ def ecrire_log(niveau, message):
 
 def gardien():
     """Tourne en continu, même si personne ne regarde la vidéo."""
-    global derniere_image
+    global derniere_image, derniere_ecriture
     ecrire_log("INFO", "Surveillance démarrée")
     etait_detecte = False
 
@@ -52,10 +56,16 @@ def gardien():
         nb_personnes = len(boxes)
         detecte = nb_personnes > 0
 
-        # Le journal : une ligne seulement quand l'état CHANGE
+        # Le journal : à l'arrivée, puis toutes les 5 s de présence, puis au départ
+        maintenant = time.time()
         if detecte and not etait_detecte:
             score = float(boxes.conf.max())
             ecrire_log("ALERTE", f"Intrusion détectée ({nb_personnes} personne(s), confiance {score:.2f})")
+            derniere_ecriture = maintenant
+        elif detecte and (maintenant - derniere_ecriture) > DELAI_LOG:
+            score = float(boxes.conf.max())
+            ecrire_log("INFO", f"Présence toujours détectée ({nb_personnes} personne(s), confiance {score:.2f})")
+            derniere_ecriture = maintenant
         elif not detecte and etait_detecte:
             ecrire_log("INFO", "Zone libre")
         etait_detecte = detecte
@@ -92,6 +102,15 @@ def generer_images():
         if image is not None:
             yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + image + b"\r\n")
         time.sleep(0.03)     # environ 30 images par seconde
+
+
+@app.route("/")
+def accueil():
+    """Page d'accueil : liste les routes disponibles (évite le 404 sur '/')."""
+    return jsonify({
+        "service": "Sentinel-X - vision",
+        "routes": ["/video", "/status", "/logs"],
+    })
 
 
 @app.route("/video")

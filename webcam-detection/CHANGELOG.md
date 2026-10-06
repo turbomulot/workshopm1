@@ -27,6 +27,8 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 - `requirements.txt` : liste des dépendances Python du projet.
 
 ### Modifié
+- Journal : une ligne `Présence toujours détectée` toutes les 5 secondes tant que quelqu'un est présent, en plus de `Intrusion détectée` (arrivée) et `Zone libre` (départ).
+- Route `/` qui liste les routes disponibles (évite le 404).
 - (rien pour l'instant)
 
 ### Corrigé

@@ -23,7 +23,7 @@ Il lit le flux d'une webcam, détecte la présence d'une personne avec **YOLOv8n
 - Capture le flux vidéo d'une webcam USB (ou de la caméra intégrée pour les tests).
 - Redimensionne chaque image en **640x480** pour tenir sous **100 ms par trame** (exigence du sujet).
 - Détecte les **personnes** (classe 0 du modèle YOLOv8n) avec un seuil de confiance de **0,5**.
-- Écrit un journal d'événements (intrusion détectée, zone libre) **uniquement quand l'état change**.
+- Écrit un journal d'événements : intrusion détectée à l'arrivée, rappel toutes les 5 secondes tant que la présence continue, zone libre au départ.
 - Expose l'image annotée, l'état courant et le journal en HTTP pour le dashboard.
 
 La détection tourne **en arrière-plan** dans un thread : elle fonctionne même si personne ne regarde la page vidéo.
