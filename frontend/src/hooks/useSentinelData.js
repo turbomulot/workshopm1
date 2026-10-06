@@ -11,6 +11,7 @@ import {
 } from '../services/api'
 
 // Centralise toutes les données du dashboard.
+// connected : au moins une source (service IA ou backend) répond.
 // Le polling sert de base, le WebSocket (si disponible) pousse les mises à jour instantanées.
 export function useSentinelData() {
   const [latest, setLatest] = useState(null)
@@ -32,23 +33,26 @@ export function useSentinelData() {
   useEffect(() => {
     let active = true
 
+    // Chaque source est indépendante : une panne des capteurs ne masque pas la caméra.
+    // Une source en panne ou pas encore branchée vaut null (affiché « pas de donnée »).
     async function refresh() {
-      try {
-        const [reading, alertList, aiResult, status] = await Promise.all([
-          getLatestSensorData(),
-          getAlerts(),
-          getAIDetection(),
-          getDeviceStatus(),
-        ])
-        if (!active) return
-        addReading(reading)
-        setAlerts(alertList)
-        setDetection(aiResult)
-        setDevice(status)
-        setConnected(true)
-      } catch {
-        if (active) setConnected(false)
-      }
+      const results = await Promise.allSettled([
+        getLatestSensorData(),
+        getAlerts(),
+        getAIDetection(),
+        getDeviceStatus(),
+      ])
+      if (!active) return
+
+      const [reading, alertList, aiResult, status] = results.map((result) =>
+        result.status === 'fulfilled' ? result.value : null
+      )
+      if (reading) addReading(reading)
+      else setLatest(null)
+      if (alertList) setAlerts(alertList)
+      setDetection(aiResult)
+      setDevice(status)
+      setConnected(Boolean(reading || alertList || aiResult || status))
     }
 
     getSensorHistory()

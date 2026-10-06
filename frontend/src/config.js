@@ -1,11 +1,20 @@
-export const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+export const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-export const WS_URL = import.meta.env.VITE_WS_URL || `${API_URL.replace(/^http/, 'ws')}/ws`
+// Service IA (webcam-detection/stream_detection.py) : flux caméra, détection, journal.
+// 127.0.0.1 et non localhost : sous Windows, localhost tente d'abord l'IPv6,
+// que le service n'écoute pas, et chaque requête perd environ 2 secondes.
+export const AI_URL = import.meta.env.VITE_AI_URL || 'http://127.0.0.1:5001'
+
+// Backend capteurs / actionneurs. Il n'existe pas encore : tant que VITE_API_URL
+// est vide, ces données sont affichées comme indisponibles.
+export const API_URL = import.meta.env.VITE_API_URL || null
+export const WS_URL = API_URL
+  ? import.meta.env.VITE_WS_URL || `${API_URL.replace(/^http/, 'ws')}/ws`
+  : null
 
 export const CAMERA_STREAM_URL = USE_MOCK
   ? null
-  : import.meta.env.VITE_CAMERA_URL || `${API_URL}/api/v1/camera/stream`
+  : import.meta.env.VITE_CAMERA_URL || `${AI_URL}/video`
 
 export const POLL_INTERVAL_MS = 2000
 export const HISTORY_LENGTH = 30
@@ -17,5 +26,11 @@ export const THRESHOLDS = {
   humidity: { warning: 75, critical: 90 },
   gas: { warning: 300, critical: 600 },
 }
+
+// Confiance de l'IA à partir de laquelle une personne vue est classée menace HIGH.
+export const HIGH_THREAT_CONFIDENCE = 0.8
+
+// Sans nouvelle analyse du service IA pendant ce délai, la caméra est considérée hors ligne.
+export const CAMERA_TIMEOUT_MS = 10000
 
 export const GAS_UNIT = 'ppm'

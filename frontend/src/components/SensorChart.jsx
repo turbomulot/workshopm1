@@ -1,7 +1,7 @@
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -9,72 +9,94 @@ import {
   YAxis,
 } from 'recharts'
 
-const AXIS_TICK = { fill: '#7b8798', fontSize: 11 }
+const FONT = "'Inter Variable', sans-serif"
+const AXIS_TICK = { fill: '#6c6f76', fontSize: 11, fontFamily: FONT }
 
-export default function SensorChart({ title, data, dataKey, unit, color = '#3987e5', threshold }) {
-  const last = data.length ? data[data.length - 1][dataKey] : null
+// La courbe est noire en temps normal et prend la couleur de l'alerte sinon.
+const LINE_COLORS = {
+  normal: '#14161a',
+  warning: '#d9860a',
+  critical: '#e5382d',
+  offline: '#a9acb3',
+}
+
+export default function SensorChart({ label, data, dataKey, unit, status = 'normal', threshold }) {
+  if (data.length === 0) {
+    return <p className="chart__empty">Waiting for data</p>
+  }
+
+  const color = LINE_COLORS[status]
+  const gradientId = `chart-fill-${dataKey}`
 
   return (
-    <section className="panel chart">
-      <div className="panel__header">
-        <h2 className="panel__title">{title}</h2>
-        <span className="chart__current">{last !== null ? `${last} ${unit}` : '--'}</span>
-      </div>
-
-      <div className="chart__body">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-            <CartesianGrid stroke="#1f2a3a" vertical={false} />
-            <XAxis
-              dataKey="time"
-              tick={AXIS_TICK}
-              tickLine={false}
-              axisLine={{ stroke: '#2a3649' }}
-              minTickGap={40}
-            />
-            <YAxis
-              tick={AXIS_TICK}
-              tickLine={false}
-              axisLine={false}
-              domain={[
-                (min) => Math.floor(min - Math.max(1, min * 0.1)),
-                (max) => Math.ceil(max + Math.max(1, max * 0.1)),
-              ]}
-              allowDecimals={false}
-              width={48}
-            />
-            <Tooltip
-              formatter={(value) => [`${value} ${unit}`, title]}
-              contentStyle={{
-                background: '#18212e',
-                border: '1px solid #2a3649',
-                borderRadius: 6,
-                fontSize: 12,
+    <div className="chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: -18 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.16} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="#eceae5" vertical={false} />
+          <XAxis
+            dataKey="time"
+            tick={AXIS_TICK}
+            tickLine={false}
+            axisLine={{ stroke: '#dedcd6' }}
+            minTickGap={60}
+          />
+          <YAxis
+            tick={AXIS_TICK}
+            tickLine={false}
+            axisLine={false}
+            tickCount={3}
+            domain={[
+              (min) => (Number.isFinite(min) ? Math.floor(min - Math.max(1, min * 0.1)) : 0),
+              (max) => (Number.isFinite(max) ? Math.ceil(max + Math.max(1, max * 0.1)) : 1),
+            ]}
+            allowDecimals={false}
+            width={52}
+          />
+          <Tooltip
+            formatter={(value) => [`${value} ${unit}`, label]}
+            contentStyle={{
+              background: '#14161a',
+              border: 'none',
+              borderRadius: 10,
+              fontSize: 12,
+              fontFamily: FONT,
+            }}
+            labelStyle={{ color: '#a9acb3' }}
+            itemStyle={{ color: '#ffffff', fontWeight: 600 }}
+            cursor={{ stroke: '#c9c7c1' }}
+          />
+          {threshold !== undefined && (
+            <ReferenceLine
+              y={threshold}
+              stroke="#d9860a"
+              strokeDasharray="4 4"
+              label={{
+                value: 'Warning',
+                fill: '#6c6f76',
+                fontSize: 10,
+                fontFamily: FONT,
+                position: 'insideTopRight',
               }}
-              labelStyle={{ color: '#a4b0c0' }}
-              itemStyle={{ color: '#e8edf4' }}
-              cursor={{ stroke: '#3a475c' }}
             />
-            {threshold !== undefined && (
-              <ReferenceLine
-                y={threshold}
-                stroke="#fab219"
-                strokeDasharray="4 4"
-                label={{ value: 'Warning', fill: '#a4b0c0', fontSize: 10, position: 'insideTopRight' }}
-              />
-            )}
-            <Line
-              type="monotone"
-              dataKey={dataKey}
-              stroke={color}
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
-              isAnimationActive={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </section>
+          )}
+          <Area
+            type="monotone"
+            dataKey={dataKey}
+            stroke={color}
+            strokeWidth={2}
+            fill={`url(#${gradientId})`}
+            dot={false}
+            activeDot={{ r: 4, stroke: '#ffffff', strokeWidth: 2 }}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
