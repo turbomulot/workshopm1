@@ -38,3 +38,21 @@ logs/
 # ---------- Éditeurs ----------
 .vscode/
 .idea/
+
+# ---------- Cybersécurité (security/) ----------
+# PKI générée : certificats et clés du groupe, jamais versionnés
+security/pki/certs/
+*.csr
+*.srl
+
+# Mots de passe générés par security/mosquitto/make-accounts.sh
+security/secrets/
+
+# Comptes Mosquitto (mots de passe hachés) et ACL générée depuis acl.template
+security/mosquitto/passwd
+security/mosquitto/passwd.txt
+security/mosquitto/acl
+
+# Captures réseau Wireshark / tcpdump (peuvent contenir des données sensibles)
+*.pcap
+*.pcapng
