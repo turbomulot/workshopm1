@@ -44,22 +44,31 @@ Le modèle `yolov8n.pt` n'est pas versionné : il se télécharge automatiquemen
 
 **Prérequis :** Python 3.9 ou plus récent, une webcam, Git.
 
-Depuis la racine du dépôt :
+Depuis la racine du dépôt, sur Mac / Linux :
 
 ```bash
 # 1. Créer l'environnement virtuel (une seule fois)
 python3 -m venv .venv
 
 # 2. L'activer (à refaire à chaque nouveau terminal)
-source .venv/bin/activate          # Mac / Linux
-# .venv\Scripts\activate           # Windows
+source .venv/bin/activate
 
 # 3. Mettre pip à jour, puis installer les dépendances
 python -m pip install --upgrade pip
 pip install -r webcam-detection/requirements.txt
 ```
 
-L'installation peut durer plusieurs minutes : PyTorch (embarqué par `ultralytics`) est volumineux.
+Sur Windows, dans l'invite de commandes `cmd` (chemins avec des antislashs) :
+
+```bat
+py -3 -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -r webcam-detection\requirements.txt
+```
+
+L'installation peut durer plusieurs minutes : PyTorch (embarqué par `ultralytics`) est volumineux, 2 à 3 Go.
+
+Le fichier `requirements.txt` ne fige pas les versions : pip prend celles qui existent en binaire pour le Python installé. Une version figée pour un autre Python (par exemple `numpy==2.0.2` sous Python 3.13) obligerait pip à compiler, ce qui échoue sans compilateur C.
 
 **Mac :** à la première utilisation, macOS demande l'accès à la caméra pour le terminal (ou VS Code). Accepte, ou active-le dans *Réglages Système → Confidentialité et sécurité → Caméra*.
 
@@ -88,6 +97,8 @@ Les alertes JSON s'affichent dans le terminal, au maximum une toutes les 5 secon
 ```bash
 python3 stream_detection.py
 ```
+
+Sous Windows sans activer l'environnement : `..\.venv\Scripts\python stream_detection.py` depuis `webcam-detection`.
 
 Le serveur écoute sur le port **5001**. Ouvre ensuite `http://localhost:5001/video` dans un navigateur. `Ctrl + C` pour arrêter.
 
