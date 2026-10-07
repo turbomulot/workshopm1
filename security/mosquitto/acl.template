@@ -1,0 +1,18 @@
+# ============================================================
+# Sentinel-X — ACL Mosquitto
+# Chaque compte n'a accès qu'à ses propres topics.
+# MODÈLE : security/mosquitto/make-accounts.sh génère le fichier "acl" en
+# remplaçant g<n> par votre groupe (ex. g11). Ne pas modifier "acl" à la main.
+# ============================================================
+
+# --- L'ESP8266 : publie sa télémétrie et ses événements, lit ses commandes ---
+user esp-g<n>
+topic write sentinelx/g<n>/telemetry
+topic write sentinelx/g<n>/event
+topic write sentinelx/g<n>/status
+topic read  sentinelx/g<n>/cmd
+
+# --- L'API : lit tout le groupe, envoie les commandes ---
+user api
+topic read  sentinelx/g<n>/#
+topic write sentinelx/g<n>/cmd
