@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 // online : la caméra envoie des images. Quand elle revient, le flux est rechargé.
 export default function CameraFeed({ streamUrl, online = true }) {
   const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     setFailed(false)
@@ -24,6 +25,7 @@ export default function CameraFeed({ streamUrl, online = true }) {
       <div className="camera__frame">
         {live ? (
           <img
+            key={attempt}
             className="camera__stream"
             src={streamUrl}
             alt="Sentinel-X camera stream"
@@ -35,6 +37,7 @@ export default function CameraFeed({ streamUrl, online = true }) {
             <p className="camera__placeholder-text">
               {streamUrl ? 'The stream is unreachable.' : 'Waiting for the camera stream.'}
             </p>
+            {streamUrl && <button type="button" onClick={() => { setAttempt((value) => value + 1); setFailed(false) }}>Réessayer le flux</button>}
           </div>
         )}
       </div>

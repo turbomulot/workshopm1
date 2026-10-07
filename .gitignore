@@ -15,6 +15,10 @@ __pycache__/
 *.key
 *.crt
 secrets.*
+webcam-detection/.data/
+frontend/node_modules/
+frontend/dist/
+.env.local
 
 # ---------- Modèles IA lourds (téléchargés automatiquement) ----------
 *.pt

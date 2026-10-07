@@ -1,4 +1,5 @@
 import json
+import sys
 import time
 from collections import deque
 from datetime import datetime
@@ -9,7 +10,8 @@ from ultralytics import YOLO
 DELAI_ENTRE_ALERTES = 5   # secondes : pas plus d'une alerte toutes les 5 s
 
 modele = YOLO("yolov8n.pt")
-camera = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+backend_camera = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
+camera = cv2.VideoCapture(0, backend_camera)
 
 dernieres_latences = deque(maxlen=30)   # garde les 30 dernières mesures
 derniere_alerte = 0                     # heure de la dernière alerte envoyée

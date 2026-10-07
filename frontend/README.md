@@ -4,6 +4,12 @@ Interface web de supervision du boîtier SENTINEL-X : capteurs (DHT22, MQ-2, PIR
 
 Stack : React 18, Vite 5, Recharts, CSS classique.
 
+## Ajout employés et badges QR
+
+La navigation propose maintenant **Employés & badges** : fiches (nom, prénom, photo), génération du QR, désactivation/renouvellement et validations webcam. Le service badges tourne dans `webcam-detection/stream_detection.py` sur le port 5001 et reste indépendant du backend capteurs et de son mode simulé.
+
+Le guide [Reprise développeur web - badges](../docs/REPRISE_DEV_WEB_BADGES.md) décrit chaque fichier modifié, les routes API, la configuration, les tests et les limites. Le proxy `/access-api` est fourni en développement par Vite ; il doit être configuré séparément en déploiement. La page demande la clé locale stockée dans `webcam-detection/.data/admin-token.txt`.
+
 ## Lancer le projet
 
 ```bash

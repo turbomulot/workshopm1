@@ -52,15 +52,21 @@ function lastConfidence(logs) {
   return null
 }
 
-// /status : { detection, personnes, latence_ms, heure }
+// /status : { detection, personnes, latence_ms, heure, confiance?, camera_connected? }
 // Si la caméra ne répond plus, le service arrête l'analyse et /status reste figé :
 // la caméra est donc considérée en ligne tant que « heure » est récente.
 function toDetection(status, logs) {
   const timestamp = toTimestamp(status.heure)
   const cameraOnline =
-    Boolean(timestamp) && Math.abs(Date.now() - new Date(timestamp)) < CAMERA_TIMEOUT_MS
+    Boolean(timestamp) &&
+    status.camera_connected !== false &&
+    Math.abs(Date.now() - new Date(timestamp)) < CAMERA_TIMEOUT_MS
   const humanDetected = cameraOnline && Boolean(status.detection)
-  const confidence = humanDetected ? lastConfidence(logs) : null
+  // Les versions récentes du service donnent la confiance dans /status ; les
+  // anciennes seulement dans les messages du journal.
+  const confidence = humanDetected
+    ? (typeof status.confiance === 'number' ? status.confiance : lastConfidence(logs))
+    : null
   let threatLevel = 'LOW'
   if (humanDetected) threatLevel = confidence >= HIGH_THREAT_CONFIDENCE ? 'HIGH' : 'MEDIUM'
 

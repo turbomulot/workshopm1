@@ -14,9 +14,10 @@ export const API_URL = import.meta.env.VITE_API_URL || null
 // autre adresse que l'API (reverse proxy séparé).
 export const WS_URL = API_URL ? import.meta.env.VITE_WS_URL || API_URL : null
 
-export const CAMERA_STREAM_URL = USE_MOCK
-  ? null
-  : import.meta.env.VITE_CAMERA_URL || `${AI_URL}/video`
+// Une URL caméra explicite est respectée même en mode simulé (capteurs mockés,
+// vraie webcam). Sinon : le flux du service IA, ou rien en mode simulé.
+export const CAMERA_STREAM_URL =
+  import.meta.env.VITE_CAMERA_URL || (USE_MOCK ? null : `${AI_URL}/video`)
 
 export const POLL_INTERVAL_MS = 2000
 export const HISTORY_LENGTH = 30
