@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import time
@@ -5,7 +6,7 @@ from collections import deque
 from datetime import datetime
 
 import cv2
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 from ultralytics import YOLO
 
 app = Flask(__name__)
@@ -18,6 +19,20 @@ camera = cv2.VideoCapture(0, BACKENDS_CAMERA.get(sys.platform, cv2.CAP_ANY))
 
 # --- Réglages ---
 DELAI_LOG = 5            # secondes entre deux logs tant que quelqu'un est présent
+
+# --- Sécurité (voir security/docs/matrice-securite.md) ---
+# Par défaut, le service n'écoute que sur ce PC : depuis le réseau, on passe
+# par la porte HTTPS avec mot de passe (Caddy, https://<serveur>/ai/...).
+# VISION_HOST=0.0.0.0 pour revenir à l'ancien comportement (déconseillé).
+HOTE = os.environ.get("VISION_HOST", "127.0.0.1")
+# Seuls ces sites peuvent lire /status et /logs depuis un navigateur (CORS).
+ORIGINES_AUTORISEES = {
+    origine.strip()
+    for origine in os.environ.get(
+        "FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if origine.strip()
+}
 
 # --- Ce que le gardien met à jour, et que le serveur web lit ---
 etat = {"detection": False, "personnes": 0, "latence_ms": 0, "heure": ""}
@@ -95,7 +110,11 @@ def gardien():
 
 @app.after_request
 def autoriser_le_frontend(reponse):
-    reponse.headers["Access-Control-Allow-Origin"] = "*"
+    # Avant : "*" (n'importe quel site web pouvait lire la détection et le journal).
+    origine = request.headers.get("Origin")
+    if origine in ORIGINES_AUTORISEES:
+        reponse.headers["Access-Control-Allow-Origin"] = origine
+        reponse.headers["Vary"] = "Origin"
     return reponse
 
 
@@ -136,4 +155,4 @@ def liste_logs():
 
 # On lance le gardien en arrière-plan, puis le serveur web
 threading.Thread(target=gardien, daemon=True).start()
-app.run(host="0.0.0.0", port=5001)
+app.run(host=HOTE, port=5001)

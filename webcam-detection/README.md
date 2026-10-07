@@ -91,11 +91,13 @@ python3 stream_detection.py
 
 Le serveur écoute sur le port **5001**. Ouvre ensuite `http://localhost:5001/video` dans un navigateur. `Ctrl + C` pour arrêter.
 
+> **Sécurité** : le serveur n'écoute que sur le PC lui-même (`127.0.0.1`). Depuis le réseau de table, on y accède en HTTPS avec mot de passe via `https://<serveur>/ai/...` (proxy Caddy, voir `infra/README.md`). Pour un test rapide sur le réseau sans proxy : `VISION_HOST=0.0.0.0 python3 stream_detection.py` (à ne pas laisser pendant la démo).
+
 > Une webcam ne peut être utilisée que par **un seul programme à la fois** : ferme les autres scripts avant d'en lancer un.
 
 ## 5. API pour le frontend
 
-Base : `http://<adresse-du-serveur>:5001`
+Base : `http://127.0.0.1:5001` sur le serveur, ou `https://<serveur>/ai` depuis le réseau (via Caddy).
 
 | Route | Méthode | Réponse |
 |---|---|---|
