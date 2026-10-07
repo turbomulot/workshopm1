@@ -1,0 +1,74 @@
+# Sentinel-X : pile autonome pour développer et tester le backend sans la pile INFRA
+# (broker MQTT en clair + base de données + backend).
+# Sur la VM, c'est le docker-compose de l'INFRA qui lance le backend : voir README.md.
+#
+#   cd backend
+#   cp .env.example .env
+#   docker compose up -d --build
+#
+# Seuls deux ports sortent du réseau Docker : MQTT (pour l'ESP8266) et l'API (pour le dashboard).
+
+name: sentinel-backend-dev
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    networks:
+      - sentinel
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?définir POSTGRES_USER dans .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sentinel}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - sentinel
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      PORT: 3000
+      MQTT_URL: ${MQTT_URL:-mqtt://mosquitto:1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC:-sentinel}
+      MQTT_CMD_FORMAT: ${MQTT_CMD_FORMAT:-state}
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-sentinel}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      DEVICE_OFFLINE_AFTER_S: ${DEVICE_OFFLINE_AFTER_S:-15}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    networks:
+      - sentinel
+
+networks:
+  sentinel:
+
+volumes:
+  db-data:
+  mosquitto-data:
