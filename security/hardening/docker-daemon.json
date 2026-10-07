@@ -1,0 +1,11 @@
+{
+  "_comment": "Sentinel-X - a placer dans /etc/docker/daemon.json puis: sudo systemctl restart docker. Pas de userns-remap : il casse les fichiers montes (certificats, mots de passe). L'isolation se fait conteneur par conteneur, cote infra (utilisateur non root, cap_drop, read_only, no-new-privileges).",
+  "no-new-privileges": true,
+  "icc": false,
+  "live-restore": true,
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
