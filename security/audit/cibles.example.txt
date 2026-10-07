@@ -1,0 +1,8 @@
+# Cibles du pentest croisé — une IP par ligne (serveur de chaque groupe)
+# Copier en cibles.txt et remplir avec les IP données par les coachs jeudi.
+# Uniquement des groupes participants et consentants, réseau du workshop.
+# Lancer : bash security/audit/cross-audit.sh -f security/audit/cibles.txt
+#
+# 10.10.5.1
+# 10.10.8.1
+# 10.10.12.1

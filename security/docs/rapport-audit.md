@@ -34,6 +34,8 @@ Teste ta propre table comme un attaquant, pour fermer les trous avant le pentest
 
 ## 2. Audit croisé (jeudi après-midi)
 
+Lancer `bash security/audit/cross-audit.sh -f security/audit/cibles.txt` (IP des groupes données par les coachs) : il produit un pré-rapport par cible dans `security/audit/` (ports ouverts, MQTT en clair, broker anonyme, version TLS). Compléter chaque rapport à la main (dashboard protégé ? Wireshark ? secrets dans leur Git ?), puis recopier ci-dessous.
+
 Une entrée par faille trouvée sur une autre table.
 
 ### Cible : groupe ___
