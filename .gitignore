@@ -56,3 +56,6 @@ security/mosquitto/acl
 # Captures réseau Wireshark / tcpdump (peuvent contenir des données sensibles)
 *.pcap
 *.pcapng
+
+# Liste réelle des cibles du pentest (IP des autres groupes)
+security/audit/cibles.txt
