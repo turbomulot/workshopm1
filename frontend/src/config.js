@@ -5,12 +5,14 @@ export const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 // que le service n'écoute pas, et chaque requête perd environ 2 secondes.
 export const AI_URL = import.meta.env.VITE_AI_URL || 'http://127.0.0.1:5001'
 
-// Backend capteurs / actionneurs. Il n'existe pas encore : tant que VITE_API_URL
-// est vide, ces données sont affichées comme indisponibles.
+// Backend capteurs / actionneurs (backend/). Tant que VITE_API_URL est vide,
+// ces données sont affichées comme indisponibles.
 export const API_URL = import.meta.env.VITE_API_URL || null
-export const WS_URL = API_URL
-  ? import.meta.env.VITE_WS_URL || `${API_URL.replace(/^http/, 'ws')}/ws`
-  : null
+
+// Temps réel : le backend utilise socket.io, servi à la même adresse que l'API
+// (chemin /socket.io/). VITE_WS_URL ne sert que si le temps réel passe par une
+// autre adresse que l'API (reverse proxy séparé).
+export const WS_URL = API_URL ? import.meta.env.VITE_WS_URL || API_URL : null
 
 export const CAMERA_STREAM_URL = USE_MOCK
   ? null

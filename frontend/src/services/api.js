@@ -1,3 +1,4 @@
+import { io } from 'socket.io-client'
 import {
   AI_URL,
   API_URL,
@@ -6,8 +7,13 @@ import {
   HISTORY_LENGTH,
   HIGH_THREAT_CONFIDENCE,
   CAMERA_TIMEOUT_MS,
+  GAS_UNIT,
 } from '../config'
 import * as mock from '../data/mockData'
+
+// Seul fichier qui parle au service IA et au backend. Chaque réponse est traduite
+// vers le format du dashboard (celui de data/mockData.js) : les composants et le
+// hook ne connaissent pas les contrats des services.
 
 async function request(baseUrl, path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options)
@@ -70,7 +76,7 @@ function toDetection(status, logs) {
 }
 
 // /logs : [{ id, heure, niveau, message }, ...]
-function toAlert(log) {
+function toAIAlert(log) {
   return {
     id: `ai-${log.id}`,
     timestamp: toTimestamp(log.heure),
@@ -79,22 +85,119 @@ function toAlert(log) {
   }
 }
 
+// --- Backend (backend/README.md) : traduit ses réponses vers le format du dashboard ---
+
+// Mesure du backend : { id, timestamp, temp, hum, gas, pir }
+function toReading(measurement) {
+  if (!measurement) return null
+  return {
+    timestamp: measurement.timestamp,
+    temperature: measurement.temp ?? null,
+    humidity: measurement.hum ?? null,
+    gas: measurement.gas ?? null,
+    motion: measurement.pir === null || measurement.pir === undefined ? null : Boolean(measurement.pir),
+  }
+}
+
+// Le backend nomme les capteurs et les niveaux à sa façon.
+const SENSOR_NAMES = { temp: 'temperature', hum: 'humidity', gas: 'gas', motion: 'motion' }
+const LEVEL_NAMES = { info: 'info', warn: 'warning', critical: 'critical' }
+
+const SENSOR_MESSAGES = {
+  temperature: { warning: 'Temperature anomaly', critical: 'Critical temperature reached' },
+  humidity: { warning: 'High humidity level', critical: 'Critical humidity level' },
+  gas: { warning: 'Abnormal gas level', critical: 'High gas level detected' },
+  motion: { info: 'Zone clear', warning: 'Motion detected', critical: 'Motion detected' },
+}
+const SENSOR_UNITS = { temperature: '°C', humidity: '%', gas: GAS_UNIT }
+
+// Le backend n'envoie pas de phrase : on la construit à partir du type et de la valeur.
+function describeAlert(source, type, level, value) {
+  if (source === 'vision') {
+    const people = typeof value === 'object' && value !== null ? value.people : null
+    const confidence = typeof value === 'object' && value !== null ? value.confidence : null
+    const details = []
+    if (people) details.push(`${people} ${people > 1 ? 'people' : 'person'}`)
+    if (typeof confidence === 'number') details.push(`${Math.round(confidence * 100)}%`)
+    const base = type === 'person_detected' ? 'Human detected by camera' : `Camera: ${type}`
+    return details.length ? `${base} (${details.join(', ')})` : base
+  }
+
+  const base = SENSOR_MESSAGES[type]?.[level]
+  if (base) {
+    const unit = SENSOR_UNITS[type]
+    return typeof value === 'number' && unit ? `${base} (${value} ${unit})` : base
+  }
+  return typeof value === 'number' ? `${type}: ${value}` : type
+}
+
+// Alerte du backend : { id, timestamp, source, type, level, value }
+// Même traduction pour la liste REST et les messages socket.io, pour que les ids
+// coïncident et que le hook puisse dédoublonner.
+function toBackendAlert(alert) {
+  const type = alert.source === 'vision' ? 'ai' : SENSOR_NAMES[alert.type] || alert.type
+  const level = LEVEL_NAMES[alert.level] || 'info'
+  return {
+    id: `api-${alert.id}`,
+    timestamp: alert.timestamp,
+    type,
+    level,
+    message: describeAlert(alert.source, type, level, alert.value),
+  }
+}
+
+// Le backend ne connaît qu'une LED à la fois (red / green / off) ; le dashboard
+// affiche deux lampes indépendantes.
+function toActuators(actuators) {
+  if (!actuators) return undefined
+  return {
+    buzzer: Boolean(actuators.buzzer),
+    ledGreen: actuators.led === 'green',
+    ledRed: actuators.led === 'red',
+  }
+}
+
+// Statut du backend : { online, lastSeen, mqttConnected, actuators: { buzzer, led }, latest }
+function toDeviceStatus(status) {
+  return {
+    online: Boolean(status.online),
+    ip: null,
+    lastSeen: status.lastSeen,
+    mqttConnected: Boolean(status.mqttConnected),
+    actuators: toActuators(status.actuators),
+  }
+}
+
+// Commandes du panneau de contrôle -> body de POST /api/v1/commands ({ buzzer, led }).
+const COMMANDS = {
+  BUZZER_ON: { buzzer: true },
+  BUZZER_OFF: { buzzer: false },
+  LED_GREEN_ON: { led: 'green' },
+  LED_GREEN_OFF: { led: 'off' },
+  LED_RED_ON: { led: 'red' },
+  LED_RED_OFF: { led: 'off' },
+  ALARM_STOP: { buzzer: false, led: 'green' },
+}
+
 // --- Données du dashboard ---
 // Les fonctions qui dépendent du backend renvoient null (ou une liste vide)
 // tant qu'il n'est pas configuré : le dashboard affiche alors « pas de donnée ».
 
 // { timestamp, temperature, humidity, gas, motion }
+// Le backend n'a pas de route « dernière mesure » : elle est dans /status.latest.
 export async function getLatestSensorData() {
   if (USE_MOCK) return mock.getLatestSensorData()
   if (!API_URL) return null
-  return request(API_URL, '/api/v1/sensors/latest')
+  const status = await request(API_URL, '/api/v1/status')
+  return toReading(status.latest)
 }
 
 // [{ timestamp, temperature, humidity, gas, motion }, ...] du plus ancien au plus récent
 export async function getSensorHistory(limit = HISTORY_LENGTH) {
   if (USE_MOCK) return mock.getSensorHistory()
   if (!API_URL) return []
-  return request(API_URL, `/api/v1/sensors/history?limit=${limit}`)
+  const measurements = await request(API_URL, `/api/v1/history?limit=${limit}`)
+  return measurements.map(toReading)
 }
 
 // [{ id, timestamp, type, message, level }, ...]
@@ -102,8 +205,12 @@ export async function getSensorHistory(limit = HISTORY_LENGTH) {
 export async function getAlerts(limit = 20) {
   if (USE_MOCK) return mock.getAlerts()
 
-  const sources = [request(AI_URL, '/logs').then((logs) => logs.map(toAlert))]
-  if (API_URL) sources.push(request(API_URL, `/api/v1/alerts?limit=${limit}`))
+  const sources = [request(AI_URL, '/logs').then((logs) => logs.map(toAIAlert))]
+  if (API_URL) {
+    sources.push(
+      request(API_URL, `/api/v1/alerts?limit=${limit}`).then((alerts) => alerts.map(toBackendAlert))
+    )
+  }
 
   const results = await Promise.allSettled(sources)
   const available = results.filter((result) => result.status === 'fulfilled')
@@ -122,52 +229,46 @@ export async function getAIDetection() {
   return toDetection(status, logs)
 }
 
-// { online, ip, lastSeen, actuators: { buzzer, ledGreen, ledRed } }
+// { online, ip, lastSeen, mqttConnected, actuators: { buzzer, ledGreen, ledRed } }
 export async function getDeviceStatus() {
   if (USE_MOCK) return mock.getDeviceStatus()
   if (!API_URL) return null
-  return request(API_URL, '/api/v1/status')
+  return toDeviceStatus(await request(API_URL, '/api/v1/status'))
 }
 
-// Réponse attendue : { ok, actuators: { buzzer, ledGreen, ledRed } }
+// command : BUZZER_ON, BUZZER_OFF, LED_GREEN_ON, LED_GREEN_OFF, LED_RED_ON, LED_RED_OFF, ALARM_STOP
+// Réponse : { ok, actuators: { buzzer, ledGreen, ledRed } }
 export async function sendCommand(command) {
   if (USE_MOCK) return mock.sendCommand(command)
   if (!API_URL) throw new Error('Backend not configured')
-  return request(API_URL, '/api/v1/commands', {
+  const body = COMMANDS[command]
+  if (!body) throw new Error(`Unknown command: ${command}`)
+  const result = await request(API_URL, '/api/v1/commands', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command }),
+    body: JSON.stringify(body),
   })
+  return { ok: Boolean(result.ok), actuators: toActuators(result.actuators) }
 }
 
-// Messages attendus : { type: 'sensor' | 'alert' | 'ai' | 'status', data: {...} }
+// Temps réel : le backend pousse ses événements socket.io « sensors », « alert »
+// et « status ». Ils sont traduits en { type: 'sensor' | 'alert' | 'status', data }.
 // Retourne une fonction pour fermer la connexion.
 export function connectWebSocket(onMessage) {
   if (USE_MOCK || !WS_URL) return () => {}
 
-  let socket
-  let retryTimer
-  let closed = false
+  const socket = io(WS_URL, {
+    reconnectionDelay: 3000,
+    reconnectionDelayMax: 3000,
+  })
 
-  function open() {
-    socket = new WebSocket(WS_URL)
-    socket.onmessage = (event) => {
-      try {
-        onMessage(JSON.parse(event.data))
-      } catch {
-        console.warn('WebSocket: message ignoré (JSON invalide)')
-      }
-    }
-    socket.onclose = () => {
-      if (!closed) retryTimer = setTimeout(open, 3000)
-    }
-  }
+  socket.on('sensors', (measurement) => {
+    const reading = toReading(measurement)
+    if (reading) onMessage({ type: 'sensor', data: reading })
+  })
+  socket.on('alert', (alert) => onMessage({ type: 'alert', data: toBackendAlert(alert) }))
+  socket.on('status', (status) => onMessage({ type: 'status', data: toDeviceStatus(status) }))
+  socket.on('connect_error', (error) => console.warn('socket.io:', error.message))
 
-  open()
-
-  return () => {
-    closed = true
-    clearTimeout(retryTimer)
-    socket.close()
-  }
+  return () => socket.disconnect()
 }
