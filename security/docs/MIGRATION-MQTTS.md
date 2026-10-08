@@ -19,18 +19,15 @@ bash security/mosquitto/make-accounts.sh
 Puis distribution par **clé USB uniquement** (jamais par Git ni par message) :
 
 **À Nino (serveur) :**
-- `security/pki/certs/ca.crt`
-- `security/pki/certs/broker/` (dossier : `broker.crt` + `broker.key`)
-- `security/mosquitto/passwd`
-- du kit : `broker/mosquitto.conf`, `broker/acl`, `backend/docker-compose.override.yml`
+- `security/pki/certs/ca.crt` et le dossier `security/pki/certs/broker/`
+- `security/mosquitto/mosquitto.conf`, `security/mosquitto/acl`, `security/mosquitto/passwd`
+- `security/integration/docker-compose.backend.yml`
 - le mot de passe du compte `api` (contenu de `security/secrets/mqtt_api_password.txt`)
 
 **Au dev (boîtier) :**
 - `security/pki/certs/ca.crt`
 - le compte `esp-g11` et son mot de passe (contenu de `security/secrets/mqtt_esp_password.txt`)
-- du kit : `firmware/main.cpp`, `firmware/secrets.example.h`
-
-> Important : utiliser les fichiers broker **du kit** (topics `sentinel/*`, ceux de l'équipe), pas ceux de `security/mosquitto/` (topics `sentinelx/g11/*`).
+- `security/integration/firmware/main.cpp` et `secrets.example.h`
 
 Enfin, mettre `security/pki/certs/ca.key` sur la clé USB puis le supprimer du PC.
 
@@ -43,14 +40,16 @@ Dans le dossier `backend/` du dépôt :
 ```bash
 mkdir -p mosquitto certs secrets
 
-# fichiers reçus du cyber
+# fichiers reçus du cyber (clé USB)
 cp <clé>/mosquitto.conf  mosquitto/mosquitto.conf
 cp <clé>/acl             mosquitto/acl
 cp <clé>/passwd          mosquitto/passwd
 cp <clé>/ca.crt          certs/ca.crt
 cp -r <clé>/broker       certs/broker
 cp <clé>/mqtt_api_password.txt  secrets/
-cp <clé>/docker-compose.override.yml .
+
+# REMPLACER le docker-compose.yml par la version sécurisée
+cp <clé>/docker-compose.backend.yml  docker-compose.yml
 
 # dans .env : remplacer CORS_ORIGIN=* par l'URL du dashboard
 #   CORS_ORIGIN=http://10.10.11.1:5173
@@ -74,7 +73,7 @@ Dans le projet PlatformIO du boîtier :
 
 ```bash
 cp <clé>/main.cpp           src/main.cpp
-cp <clé>/secrets.example.h  secrets.example.h
+cp <clé>/secrets.example.h  .
 ```
 
 Créer `secrets.h` (modèle `secrets.example.h`) avec les valeurs reçues :
@@ -109,7 +108,7 @@ sudo tcpdump -i wlan0 -w preuve-mqtts.pcap port 8883   # Wireshark : uniquement 
 ## Si quelque chose casse (retour arrière)
 
 - Boîtier : re-flasher l'ancien firmware (branche `c_plus_plus`).
-- Serveur : supprimer `docker-compose.override.yml`, puis `docker compose up -d`.
+- Serveur : remettre l'ancien `docker-compose.yml` (branche `nino`), puis `docker compose up -d`.
 
 On revient à la version en clair qui fonctionnait. À ne garder qu'en dernier recours : le but reste la version chiffrée.
 
@@ -118,4 +117,4 @@ On revient à la version en clair qui fonctionnait. À ne garder qu'en dernier r
 ## En plus (hors migration)
 
 - Le mot de passe Wi-Fi écrit en dur dans l'ancien firmware reste dans l'historique Git : le changer sur le vrai routeur.
-- `CORS_ORIGIN=*` → mettre l'URL du dashboard (fait à l'étape 2).
+- `CORS_ORIGIN=*` → l'URL du dashboard (fait à l'étape 2).

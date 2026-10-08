@@ -14,6 +14,7 @@ SEC="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$SEC/.env" ] && { set -a; . "$SEC/.env"; set +a; }
 N="${GROUP_NUMBER:?GROUP_NUMBER manquant (security/.env)}"
 G="g$N"
+BASE="${MQTT_BASE_TOPIC:-sentinel}"
 HOST="${BROKER_HOST:-localhost}"
 CA="$SEC/pki/certs/ca.crt"
 ESP_PW_FILE="$SEC/secrets/mqtt_esp_password.txt"
@@ -55,7 +56,7 @@ mq() {
   fi
 }
 
-echo "Tests de sécurité du broker — groupe $G — $HOST:8883"
+echo "Tests de sécurité du broker — groupe $G, topics $BASE/* — $HOST:8883"
 if ! port_open "$HOST" 8883; then
   echo
   echo "Broker injoignable sur $HOST:8883 : rien à tester."
@@ -87,21 +88,21 @@ OUT=$(mq mosquitto_sub bad -t '#' -C 1 -W 4 2>&1)
 if echo "$OUT" | grep -qiE "not authori|refused|bad user"; then ok "Mauvais mot de passe refusé"; else ko "Mauvais mot de passe : $OUT"; fi
 
 echo; echo "3. Les comptes légitimes fonctionnent"
-mq mosquitto_sub api -t "sentinelx/$G/telemetry" -C 1 -W 8 >"$TMP/sub" 2>&1 &
+mq mosquitto_sub api -t "$BASE/sensors" -C 1 -W 8 >"$TMP/sub" 2>&1 &
 SUB=$!; sleep 2
-mq mosquitto_pub esp -t "sentinelx/$G/telemetry" -q 1 -m "{\"seq\":1,\"ts\":$(date +%s),\"test\":\"test-broker\"}" >/dev/null 2>&1
+mq mosquitto_pub esp -t "$BASE/sensors" -q 1 -m "{\"temp\":21,\"test\":\"test-broker\"}" >/dev/null 2>&1
 wait $SUB
 if grep -q test-broker "$TMP/sub"; then ok "Message du boîtier (esp-$G) reçu par le backend (api)"; else ko "Message non reçu : $(cat "$TMP/sub")"; fi
 
 echo; echo "4. Droits par topic (ACL)"
-mq mosquitto_sub api -t "sentinelx/$G/cmd" -C 1 -W 5 >"$TMP/cmd" 2>&1 &
+mq mosquitto_sub api -t "$BASE/cmd" -C 1 -W 5 >"$TMP/cmd" 2>&1 &
 SUB=$!; sleep 2
-mq mosquitto_pub esp -t "sentinelx/$G/cmd" -m '{"command":"BUZZER_ON"}' >/dev/null 2>&1
+mq mosquitto_pub esp -t "$BASE/cmd" -m '{"buzzer":true}' >/dev/null 2>&1
 wait $SUB
-if grep -q BUZZER_ON "$TMP/cmd"; then ko "Le compte du boîtier a pu envoyer une commande"; else ok "Le compte du boîtier ne peut pas envoyer de commande"; fi
-mq mosquitto_sub esp -t "sentinelx/$G/telemetry" -C 1 -W 5 >"$TMP/spy" 2>&1 &
+if grep -q buzzer "$TMP/cmd"; then ko "Le compte du boîtier a pu envoyer une commande"; else ok "Le compte du boîtier ne peut pas envoyer de commande"; fi
+mq mosquitto_sub esp -t "$BASE/sensors" -C 1 -W 5 >"$TMP/spy" 2>&1 &
 SUB=$!; sleep 2
-mq mosquitto_pub esp -t "sentinelx/$G/telemetry" -m '{"probe":1}' >/dev/null 2>&1
+mq mosquitto_pub esp -t "$BASE/sensors" -m '{"probe":1}' >/dev/null 2>&1
 wait $SUB
 if grep -q probe "$TMP/spy"; then ko "Le compte du boîtier peut lire les mesures"; else ok "Le compte du boîtier ne peut pas espionner les mesures"; fi
 

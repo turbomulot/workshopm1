@@ -23,8 +23,8 @@ Deux comptes, chacun limité à ce dont il a besoin :
 
 | Compte | Qui | Peut écrire | Peut lire |
 | --- | --- | --- | --- |
-| `esp-g<n>` | Le boîtier ESP8266 | `telemetry`, `event`, `status` | `cmd` (ses commandes) |
-| `api` | Le backend du dashboard | `cmd` | tout `sentinelx/g<n>/#` |
+| `esp-g<n>` | Le boîtier ESP8266 | `sensors`, `alerts`, `status` | `cmd` (ses commandes) |
+| `api` | Le backend du dashboard | `cmd` | tout `sentinel/#` |
 
 Le boîtier ne peut donc ni envoyer de commandes, ni espionner les mesures. Un compte volé reste cantonné à son rôle.
 

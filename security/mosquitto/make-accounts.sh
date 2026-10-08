@@ -16,6 +16,7 @@ SEC="$HERE/.."
 [ -f "$SEC/.env" ] && { set -a; . "$SEC/.env"; set +a; }
 N="${GROUP_NUMBER:?GROUP_NUMBER manquant : copier security/.env.example en security/.env et le remplir}"
 G="g$N"
+BASE="${MQTT_BASE_TOPIC:-sentinel}"
 
 # 1. Mots de passe ---------------------------------------------------
 mkdir -p "$SEC/secrets"
@@ -31,9 +32,9 @@ ESP_PW=$(head -n1 "$SEC/secrets/mqtt_esp_password.txt")
 API_PW=$(head -n1 "$SEC/secrets/mqtt_api_password.txt")
 
 # 2. ACL ---------------------------------------------------------------
-sed "s/g<n>/$G/g" "$HERE/acl.template" > "$HERE/acl"
+sed -e "s/g<n>/$G/g" -e "s#<base>#$BASE#g" "$HERE/acl.template" > "$HERE/acl"
 chmod 644 "$HERE/acl"
-echo "==> ACL générée pour $G (security/mosquitto/acl)"
+echo "==> ACL générée pour $G, topics $BASE/* (security/mosquitto/acl)"
 
 # 3. Fichier passwd ----------------------------------------------------
 # On écrit "compte:mot_de_passe" puis mosquitto_passwd -U les remplace par leur
