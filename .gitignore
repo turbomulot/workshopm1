@@ -42,3 +42,7 @@ logs/
 # ---------- Éditeurs ----------
 .vscode/
 .idea/
+
+
+# ---------- Fichiers de sortie / embeddings photos ----------
+embeddings.pkl
