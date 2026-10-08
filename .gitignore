@@ -59,3 +59,6 @@ security/mosquitto/acl
 
 # Liste réelle des cibles du pentest (IP des autres groupes)
 security/audit/cibles.txt
+
+# Exception : le MODÈLE de secrets du firmware est suivi (sans valeurs)
+!security/integration/firmware/secrets.example.h

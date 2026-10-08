@@ -1,0 +1,85 @@
+# Sentinel-X — pile backend SÉCURISÉE (MQTTS). Remplace le docker-compose.yml de nino.
+# Seuls deux ports sortent : 8883 (MQTTS, pour le boîtier) et 3000 (API, pour le dashboard).
+# Le 1883 en clair a disparu, la base n'est jamais exposée.
+#
+#   cd backend
+#   cp .env.example .env            # POSTGRES_PASSWORD, CORS_ORIGIN (URL du dashboard)
+#   docker compose up -d --build
+#
+# Prérequis (fournis par le cyber, voir MIGRATION-MQTTS.md) :
+#   mosquitto/mosquitto.conf, mosquitto/acl, mosquitto/passwd
+#   certs/ca.crt, certs/broker/{broker.crt,broker.key}
+#   secrets/mqtt_api_password.txt
+
+name: sentinel-backend
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "8883:8883"                 # MQTTS uniquement (plus de 1883 en clair)
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./certs/broker:/mosquitto/certs:ro
+      - mosquitto-data:/mosquitto/data
+    networks:
+      - sentinel
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?définir POSTGRES_USER dans .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sentinel}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - sentinel
+    # Pas de "ports:" : la base reste interne au réseau Docker.
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      PORT: 3000
+      MQTT_URL: mqtts://mosquitto:8883
+      MQTT_USERNAME: api
+      MQTT_PASSWORD_FILE: /run/secrets/mqtt_api_password
+      MQTT_CA_FILE: /certs/ca.crt
+      MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC:-sentinel}
+      MQTT_CMD_FORMAT: ${MQTT_CMD_FORMAT:-state}
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-sentinel}
+      CORS_ORIGIN: ${CORS_ORIGIN:?définir CORS_ORIGIN dans .env (URL du dashboard, plus de *)}
+      DEVICE_OFFLINE_AFTER_S: ${DEVICE_OFFLINE_AFTER_S:-15}
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./secrets/mqtt_api_password.txt:/run/secrets/mqtt_api_password:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - sentinel
+
+networks:
+  sentinel:
+
+volumes:
+  db-data:
+  mosquitto-data:
