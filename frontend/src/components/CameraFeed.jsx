@@ -6,8 +6,11 @@ export default function CameraFeed({ streamUrl, online = true }) {
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
 
+  // A stopped server leaves the MJPEG image failed or frozen on its last frame:
+  // open a fresh connection whenever the camera comes back.
   useEffect(() => {
     setFailed(false)
+    if (online) setAttempt((value) => value + 1)
   }, [streamUrl, online])
 
   const live = Boolean(streamUrl) && online && !failed
@@ -35,7 +38,7 @@ export default function CameraFeed({ streamUrl, online = true }) {
           <div className="camera__placeholder">
             <p className="camera__placeholder-title">No video signal</p>
             <p className="camera__placeholder-text">
-              {streamUrl ? 'The stream is unreachable.' : 'Waiting for the camera stream.'}
+              {streamUrl && failed ? 'The stream is unreachable.' : 'Waiting for the camera stream.'}
             </p>
             {streamUrl && <button type="button" onClick={() => { setAttempt((value) => value + 1); setFailed(false) }}>Réessayer le flux</button>}
           </div>

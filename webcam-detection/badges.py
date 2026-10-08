@@ -1,4 +1,5 @@
-"""Local prototype badge registry. No biometric identification."""
+"""Local prototype badge registry. Face embeddings are stored only for employees
+explicitly enrolled from the supervisor page, and can be erased there."""
 
 import base64
 import hashlib
@@ -12,6 +13,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
+import numpy as np
 import qrcode
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -70,6 +72,11 @@ class BadgeStore:
                     employee_id TEXT, first_name TEXT, last_name TEXT,
                     result TEXT NOT NULL, source TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS face_embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    employee_id TEXT NOT NULL REFERENCES employees(id),
+                    model TEXT NOT NULL, embedding BLOB NOT NULL, created_at TEXT NOT NULL
+                );
             """)
 
     def connect(self):
@@ -79,11 +86,20 @@ class BadgeStore:
     @staticmethod
     def public(row):
         return {key: (bool(row[key]) if key == "active" else row[key])
-                for key in ("id", "first_name", "last_name", "photo", "active", "created_at")}
+                for key in ("id", "first_name", "last_name", "photo", "active", "created_at", "faces")}
+
+    # Embeddings of different InsightFace packs cannot be compared: only the
+    # current pack's ones are counted and matched.
+    face_model = "buffalo_s"
+    ROWS = """SELECT employees.*, (SELECT COUNT(*) FROM face_embeddings
+              WHERE face_embeddings.employee_id = employees.id AND model = ?) AS faces FROM employees"""
+
+    def fetch(self, db, employee_id):
+        return db.execute(f"{self.ROWS} WHERE id = ?", (self.face_model, employee_id)).fetchone()
 
     def employees(self):
         with self.lock, self.connect() as db:
-            return [self.public(row) for row in db.execute("SELECT * FROM employees ORDER BY created_at DESC, id")]
+            return [self.public(row) for row in db.execute(f"{self.ROWS} ORDER BY created_at DESC, id", (self.face_model,))]
 
     def create(self, body):
         names = []
@@ -97,7 +113,7 @@ class BadgeStore:
         with self.lock, self.connect() as db:
             db.execute("INSERT INTO employees VALUES (?, ?, ?, ?, 1, ?, ?)",
                        (employee_id, *names, photo, secrets.token_urlsafe(32), now()))
-            return self.public(db.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone())
+            return self.public(self.fetch(db, employee_id))
 
     def update(self, employee_id, active=None, rotate=False):
         with self.lock, self.connect() as db:
@@ -107,7 +123,41 @@ class BadgeStore:
                 db.execute("UPDATE employees SET badge_token = ? WHERE id = ?", (secrets.token_urlsafe(32), employee_id))
             if active is not None:
                 db.execute("UPDATE employees SET active = ? WHERE id = ?", (int(active), employee_id))
-            return self.public(db.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone())
+            return self.public(self.fetch(db, employee_id))
+
+    def add_face(self, employee_id, embedding):
+        with self.lock, self.connect() as db:
+            if not db.execute("SELECT id FROM employees WHERE id = ?", (employee_id,)).fetchone():
+                return None
+            db.execute("INSERT INTO face_embeddings (employee_id, model, embedding, created_at) VALUES (?, ?, ?, ?)",
+                       (employee_id, self.face_model, np.asarray(embedding, dtype=np.float32).tobytes(), now()))
+            return self.public(self.fetch(db, employee_id))
+
+    def clear_faces(self, employee_id):
+        with self.lock, self.connect() as db:
+            if not db.execute("SELECT id FROM employees WHERE id = ?", (employee_id,)).fetchone():
+                return None
+            db.execute("DELETE FROM face_embeddings WHERE employee_id = ?", (employee_id,))
+            return self.public(self.fetch(db, employee_id))
+
+    def face_gallery(self):
+        """{employee_id: (first_name, last_name, active, embeddings (N, 512))}."""
+        gallery = {}
+        with self.lock, self.connect() as db:
+            for row in db.execute("""SELECT employees.id, first_name, last_name, active, embedding
+                                     FROM face_embeddings JOIN employees ON employees.id = employee_id
+                                     WHERE model = ?""", (self.face_model,)):
+                entry = gallery.setdefault(row["id"], (row["first_name"], row["last_name"], bool(row["active"]), []))
+                entry[3].append(np.frombuffer(row["embedding"], dtype=np.float32))
+        return {key: (*entry[:3], np.vstack(entry[3])) for key, entry in gallery.items()}
+
+    def record(self, employee_id, result, source):
+        with self.lock, self.connect() as db:
+            row = db.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone() if employee_id else None
+            db.execute("""INSERT INTO events (timestamp, employee_id, first_name, last_name, result, source)
+                          VALUES (?, ?, ?, ?, ?, ?)""",
+                       (now(), row["id"] if row else None, row["first_name"] if row else None,
+                        row["last_name"] if row else None, result, source))
 
     def badge(self, employee_id):
         with self.lock, self.connect() as db:
@@ -119,7 +169,7 @@ class BadgeStore:
             payload = ""
         token = payload[len(PREFIX):] if payload.startswith(PREFIX) else ""
         with self.lock, self.connect() as db:
-            row = db.execute("SELECT * FROM employees WHERE badge_token = ?", (token,)).fetchone() if token else None
+            row = db.execute(f"{self.ROWS} WHERE badge_token = ?", (self.face_model, token)).fetchone() if token else None
             result = "valid" if row and row["active"] else "disabled" if row else "unknown"
             employee = self.public(row) if row else None
             # Keep photo and badge secret out of the camera state/event log.
@@ -164,9 +214,7 @@ class Database:
             self.db.close()
 
 
-def create_badge_api(store, camera_status):
-    api = Blueprint("badges", __name__)
-
+def require_admin(store):
     def protected(function):
         @wraps(function)
         def wrapper(*args, **kwargs):
@@ -175,6 +223,12 @@ def create_badge_api(store, camera_status):
                 return jsonify(error="Clé superviseur invalide ou absente."), 401
             return function(*args, **kwargs)
         return wrapper
+    return protected
+
+
+def create_badge_api(store, camera_status):
+    api = Blueprint("badges", __name__)
+    protected = require_admin(store)
 
     @api.get("/api/v1/employees")
     @protected

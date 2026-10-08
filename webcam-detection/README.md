@@ -7,6 +7,12 @@ Il lit le flux d'une webcam, détecte la présence d'une personne avec **YOLOv8n
 
 Le serveur intègre maintenant les fiches employés, la génération/validation des QR et une association visuelle prudente entre badge et rectangle de personne. Le nom ne reste affiché que lorsque le QR est visible et associé sans ambiguïté. La photo de la fiche n'est utilisée pour aucune reconnaissance faciale.
 
+## Reconnaissance faciale
+
+Le prototype `face_app.py` est intégré au serveur (`faces.py`). Le superviseur enregistre le visage d'un employé depuis sa fiche, à la webcam, avec son accord. Le flux vidéo nomme ensuite les visages reconnus. Le bouton « Vérifier l'accès par visage » de la page Employés & badges lance une vérification par étapes (de face, tête à gauche, tête à droite, menton levé, de nouveau de face). Le modèle InsightFace `buffalo_s` (environ 120 Mo) se télécharge au premier démarrage. Les empreintes faciales restent dans `.data/badges.sqlite3`. Routes, réglages et limites : [guide de reprise](../docs/REPRISE_DEV_WEB_BADGES.md#reconnaissance-faciale).
+
+`face_app.py` reste utilisable seul, en ligne de commande, serveur arrêté (un seul programme peut lire la caméra). Ses empreintes (`embeddings.pkl`) ne sont pas partagées avec le serveur.
+
 Voir [le guide de reprise DEV web](../docs/REPRISE_DEV_WEB_BADGES.md) pour le contrat API complet, la clé superviseur, le lancement et les tests. Les données sont stockées dans `.data/`, ignoré par Git. Le serveur écoute sur `127.0.0.1` par défaut ; les routes nominatives sont protégées par la clé locale.
 
 Le journal de présence du serveur indique désormais « présence détectée », sans assimiler automatiquement une personne à un intrus. La capture demande 1280 x 720 pour lire les QR puis redimensionne à 640 x 480 pour YOLO. L'état ajoute le temps de traitement complet, la connexion caméra et un horodatage ; l'état badges est disponible sur la route protégée `/api/v1/access/status`.

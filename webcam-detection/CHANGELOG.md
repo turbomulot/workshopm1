@@ -20,6 +20,12 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 ## [Non publié]
 
 ### Ajouté
+- Reconnaissance faciale intégrée au serveur (`faces.py`, repris de `face_app.py`) : enregistrement du visage depuis la fiche employé, noms sur le flux vidéo, vérification d'accès par étapes, événements source `face`. Modèle `buffalo_s` par défaut, analysé dans un fil séparé pour ne pas ralentir YOLO.
+- Sélecteur de caméra sur la page Employés & badges : changement à chaud, choix mémorisé dans `.data/camera.txt`, noms des caméras sous Windows (`pygrabber`).
+- Page Employés & badges : carte « Reconnaissance faciale », boutons « Enregistrer le visage » et « Effacer le visage ».
+- Vérification faciale par étapes, affichée en liste à cocher : de face, tête à gauche, tête à droite, menton levé, confirmation de face (`face_check.steps`). Remplace le clignement des yeux, jamais détecté à environ 6 analyses par seconde. Les gestes n'utilisent que les 5 points du détecteur, ce qui permet d'analyser plus d'images par seconde.
+- `test_faces.py` : treize tests avec visages synthétiques (routes protégées, enregistrement, ordre des étapes, geste tenu, photo figée ou inclinée, fiche désactivée, démarrage automatique, délai après échec, expiration).
+- Authentification par le visage sans badge : vérification lancée automatiquement pour un employé actif reconnu (`FACE_AUTO_CHECK`), rectangle de personne « Authentifié (visage) » en vert après réussite, `faces[].authenticated` dans l'état protégé.
 - Registre employés SQLite, photos facultatives, badges QR téléchargeables, désactivation et renouvellement (`badges.py`).
 - Routes employés/badges protégées par une clé superviseur locale ; historique des validations avec anti-répétition de 5 secondes.
 - Lecture de plusieurs QR et annotation du nom associé au badge uniquement lorsque l'association spatiale est claire (`qr_vision.py`).
@@ -44,6 +50,7 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 ### Corrigé
 - Compatibilité NumPy/Python 3.13 et sélection du backend caméra Windows/macOS.
 - Reconnexion caméra, invalidation des images périmées, libération à l'arrêt et import sans démarrage automatique.
+- Latence vidéo : le flux est publié par un fil de rendu séparé (`RENDER_FPS`, 20 par défaut) avec la dernière analyse dessinée par-dessus, au lieu d'attendre YOLO + QR à chaque image. Threads limités (`YOLO_THREADS=4`, `FACE_THREADS=2`) et attente active d'OpenMP/onnxruntime désactivée, capture en MJPG, visages analysés 4 fois/s hors vérification et ~12 fois/s pendant. Mesuré sur Core Ultra 7 155U : 3-5 → 10,5 images/s, âge de l'image affichée 150-270 ms → 10-30 ms.
 
 ### Vérifications du 6 octobre 2026
 - Huit tests badges/associations réussis ; compilation frontend et `pip check` réussis.

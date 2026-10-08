@@ -9,6 +9,7 @@ import tempfile
 import time
 import threading
 import unittest
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -169,6 +170,22 @@ class BadgeTests(unittest.TestCase):
         self.assertTrue(buffer.current(renewed[1]))
         stop.set()
         self.assertIsNone(buffer.read(0, stop))
+
+    def test_camera_selection_is_protected_validated_and_saved(self):
+        self.assertEqual(self.client.get("/api/v1/cameras").status_code, 401)
+        self.assertEqual(self.client.put("/api/v1/camera", json={"index": 1}).status_code, 401)
+        runtime = self.app.extensions["vision"]
+        with mock.patch("stream_detection.camera_names", return_value=["HP 5MP Camera", "USB Camera"]):
+            cameras = self.client.get("/api/v1/cameras", headers=self.headers).json
+            self.assertEqual([(c["name"], c["current"]) for c in cameras], [("HP 5MP Camera", True), ("USB Camera", False)])
+            for bad in ({"index": "1"}, {"index": -1}, {"index": 99}, {"index": True}, []):
+                self.assertEqual(self.client.put("/api/v1/camera", headers=self.headers, json=bad).status_code, 400)
+            self.assertFalse(runtime.camera_switch.is_set())
+            cameras = self.client.put("/api/v1/camera", headers=self.headers, json={"index": 1}).json
+            self.assertTrue(cameras[1]["current"])
+            self.assertTrue(runtime.camera_switch.is_set())
+            self.assertFalse(runtime.snapshot()["camera_connected"])
+        self.assertEqual(create_app(self.tmp.name).extensions["vision"].camera_index, 1)
 
     def test_stream_yields_new_frame_without_100ms_sleep(self):
         runtime = self.app.extensions["vision"]

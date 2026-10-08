@@ -16,6 +16,8 @@ __pycache__/
 *.crt
 secrets.*
 webcam-detection/.data/
+# Empreintes faciales du prototype face_app.py (données biométriques)
+embeddings.pkl
 frontend/node_modules/
 frontend/dist/
 .env.local

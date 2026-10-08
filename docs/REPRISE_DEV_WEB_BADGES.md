@@ -6,7 +6,9 @@ Date : 6 octobre 2026. Fonctionnalité intégrée au dépôt existant sur la bra
 
 Ajouter au dashboard SENTINEL-X la création de fiches employés (prénom, nom, photo facultative), la génération d'un QR individuel, l'activation/désactivation et le renouvellement du badge, ainsi que l'affichage des validations de la webcam.
 
-Il s'agit de fiches administrées par le superviseur, pas de comptes employés avec mot de passe. Aucune reconnaissance faciale n'est utilisée. La photo est une illustration pour une vérification humaine. Le badge ne prouve pas l'identité de son porteur ; un QR statique peut être copié ou prêté.
+Il s'agit de fiches administrées par le superviseur, pas de comptes employés avec mot de passe. La photo de la fiche est une illustration pour une vérification humaine : elle ne sert pas à la reconnaissance faciale. Le badge ne prouve pas l'identité de son porteur ; un QR statique peut être copié ou prêté.
+
+Mise à jour du 8 octobre 2026 : le prototype de reconnaissance faciale de la branche `IA-webcam-detection-reconnaissance-faciale` (`face_app.py`, InsightFace) est intégré au serveur caméra. Le superviseur enregistre le visage d'un employé depuis sa fiche, avec son accord, en le capturant à la webcam. La vérification d'accès par visage se fait ensuite par étapes (de face, tête à gauche, tête à droite, menton levé, de nouveau de face) pour écarter une photo. Voir [Reconnaissance faciale](#reconnaissance-faciale).
 
 Les routes de gestion et les résultats nominatifs sont protégés par une clé superviseur locale. Cette clé est une protection de prototype, pas un système de comptes ou de rôles prêt pour la production.
 
@@ -21,6 +23,8 @@ Les routes de gestion et les résultats nominatifs sont protégés par une clé 
 | `webcam-detection/qr_vision.py` | Lecture des QR, association spatiale conservatrice et annotation du prénom/nom dans la vidéo. |
 | `webcam-detection/capture_buffer.py` | Tampon d'une seule capture : l'analyse prend la plus récente, sans accumuler de retard. |
 | `webcam-detection/test_badges.py` | Tests automatisés avec identités fictives, images synthétiques et base temporaire. |
+| `webcam-detection/faces.py` | Reconnaissance faciale (InsightFace), vérification de vivacité, annotation vidéo et routes Flask des visages. Repris du prototype `face_app.py`. |
+| `webcam-detection/test_faces.py` | Tests de la reconnaissance faciale avec des visages synthétiques, sans modèle ni caméra. |
 | `docs/REPRISE_DEV_WEB_BADGES.md` | Ce document de transmission. |
 
 `webcam-detection/COMPTE_RENDU_WEBCAM.md` a été créé lors de l'analyse précédente : il décrit l'état initial, avant cette intégration, et doit être lu avec ce document.
@@ -52,7 +56,9 @@ La logique capteurs de `services/api.js`, les mocks, les commandes d'actionneurs
 
 Ne pas joindre le dossier `.data` à l'archive du code et ne pas publier la base, les photos, la clé ou les badges. Les nouvelles machines initialisent leur propre registre vide et leur propre clé.
 
-La base contient les tables `employees` et `events`. Les noms des événements sont des instantanés lors du scan. La base conserve au maximum 1000 événements ; l'API expose les 50 derniers. Les secrets QR sont conservés localement pour permettre le téléchargement ultérieur du même badge, mais ne sont jamais inclus dans la liste des employés ni dans les événements.
+- `~/.insightface/models/buffalo_s/` : modèle de reconnaissance faciale (environ 120 Mo), téléchargé au premier démarrage du serveur.
+
+La base contient les tables `employees`, `events` et `face_embeddings`. Cette dernière contient des empreintes faciales, données biométriques : elle ne quitte pas le poste et s'efface fiche par fiche avec « Effacer le visage ». Les noms des événements sont des instantanés lors du scan. La base conserve au maximum 1000 événements ; l'API expose les 50 derniers. Les secrets QR sont conservés localement pour permettre le téléchargement ultérieur du même badge, mais ne sont jamais inclus dans la liste des employés ni dans les événements.
 
 ## Lancement sous Windows
 
@@ -103,18 +109,59 @@ Toutes les routes ci-dessous demandent `Authorization: Bearer <clé superviseur>
 | GET | `/api/v1/access/events` | 50 derniers scans enregistrés, du plus récent au plus ancien. |
 | GET | `/api/v1/access/status` | État caméra et badges lus dans la dernière image. |
 | POST | `/api/v1/badges/validate` | `{payload: "sentinel-x:badge:..."}` ; test manuel protégé, source `manual`, sans attribution dans la vidéo. |
+| POST | `/api/v1/employees/<id>/faces` | Capture le visage visible dans l'image caméra actuelle ; fiche mise à jour, HTTP 201. HTTP 409 si aucun visage, plusieurs visages, image trop ancienne ou visage déjà enregistré sur une autre fiche ; 503 si la reconnaissance n'est pas prête. |
+| DELETE | `/api/v1/employees/<id>/faces` | Efface toutes les captures du visage de la fiche. |
+| GET | `/api/v1/cameras` | Caméras du PC : `[{index, name, current}]`. Noms Windows via `pygrabber`, sinon « Caméra 1 », « Caméra 2 »… |
+| PUT | `/api/v1/camera` | `{index}` ; bascule à chaud sur cette caméra et mémorise le choix dans `.data/camera.txt` (prioritaire sur `CAMERA_INDEX`). |
+| POST | `/api/v1/faces/check` | Lance une vérification d'accès par visage ; HTTP 202 avec l'état `face_check`, 409 si une vérification est en cours ou si aucun visage n'est enregistré. |
 
-Une fiche contient : `id`, `first_name`, `last_name`, `photo` (data URL JPEG ou null), `active`, `created_at`. Nom et prénom sont obligatoires, limités à 80 caractères. Photo acceptée en JPEG, PNG ou WebP, 2 Mo maximum ; réencodée en JPEG, métadonnées supprimées et dimensions réduites à 512 pixels maximum.
+Une fiche contient : `id`, `first_name`, `last_name`, `photo` (data URL JPEG ou null), `active`, `created_at`, `faces` (nombre de captures du visage). Nom et prénom sont obligatoires, limités à 80 caractères. Photo acceptée en JPEG, PNG ou WebP, 2 Mo maximum ; réencodée en JPEG, métadonnées supprimées et dimensions réduites à 512 pixels maximum.
 
 Une validation contient `result` (`valid`, `disabled`, `unknown`) et `employee` (fiche sans photo ou null). Dans l'état caméra, elle ajoute `association` (`clear`, `unassigned`) et `person_index` (index du rectangle à partir de zéro, ou null).
 
-Un événement contient : `id`, `timestamp` ISO UTC, `employee_id`, `first_name`, `last_name`, `result`, `source` (`camera`, `manual`). Un badge renouvelé dont l'ancien QR est scanné apparaît comme inconnu, sans divulguer la fiche autrefois associée.
+Un événement contient : `id`, `timestamp` ISO UTC, `employee_id`, `first_name`, `last_name`, `result`, `source` (`camera`, `manual`, `face`). Pour `face`, `result` vaut `valid`, `disabled` ou `refused`. Un badge renouvelé dont l'ancien QR est scanné apparaît comme inconnu, sans divulguer la fiche autrefois associée.
 
 Les erreurs utilisent `{error: "message"}` avec HTTP 400, 401, 404 ou 413. Le client web montre les erreurs ; il ne considère pas une indisponibilité comme une validation.
 
 Le client télécharge le PNG par `fetch` avec Bearer, puis crée un URL Blob pour l'aperçu et le téléchargement. Ne pas mettre la clé superviseur dans l'URL d'une image ou d'un lien.
 
 Les routes existantes `/video`, `/status`, `/logs` sont conservées pour la caméra. Elles ne demandent pas la clé locale. `/status` n'expose pas les fiches badges. Le flux vidéo peut contenir les noms associés aux badges : le serveur écoute donc seulement sur `127.0.0.1` par défaut. Ne pas exposer ces routes sur un réseau sans ajouter contrôle d'accès et HTTPS.
+
+## Reconnaissance faciale
+
+`GET /api/v1/access/status` ajoute trois champs :
+
+- `face_engine` : `{state, message}`, avec `state` parmi `starting`, `loading`, `ready`, `unavailable` (InsightFace non installé), `error` et `disabled` (`FACE_RECOGNITION=0`). Seul ce champ figure aussi dans `/status`, sans nom.
+- `faces` : visages de la dernière analyse, `[{employee_id, name, active, score, authenticated}]` ; `employee_id` et `name` valent null pour un visage inconnu. `authenticated` vaut true pour un employé authentifié par le visage (badge inutile).
+- `face_check` : null hors vérification. Pendant une vérification : `{state: "running", auto, step, total, instruction, remaining_s, steps}`, où `steps` est la liste `[{key, label, state}]` des 5 étapes avec `state` parmi `done`, `current`, `pending`. À la fin, pendant 5 secondes : `{state: "valid" | "disabled" | "refused", message, steps}` ; en cas de refus, l'étape en cause vaut `failed`.
+
+Le service analyse les visages dans son propre fil, 4 fois par seconde hors vérification et à chaque image pendant une vérification. La détection YOLO et le flux vidéo gardent ainsi leur cadence. Le flux affiche un cadre par visage (nom et score, ou « Visage inconnu ») et, pendant une vérification, la consigne en haut de l'image.
+
+Déroulement d'une vérification, en 5 étapes dans l'ordre, affichées en liste à cocher sur la page et rappelées en haut du flux (« Étape 2/5 : … ») :
+
+1. Reconnaissance de face : le visage est reconnu sur 3 analyses consécutives (10 s maximum). Ces images donnent la pose de référence.
+2. Tête à gauche, 3. Tête à droite, 4. Menton levé : 8 s par geste. Le geste doit tenir sur 2 analyses de suite ; visage perdu plus de 1,5 s = échec.
+5. Confirmation de face : l'identité est reconfirmée (5 s).
+
+Une fiche désactivée donne `disabled`. Chaque fin de vérification est enregistrée dans les événements, source `face`.
+
+Pourquoi plus de clignement des yeux : à la cadence d'analyse du PC portable (environ 6 images par seconde avec le modèle de points du visage), un clignement, qui dure 100 à 300 ms, tombe entre deux images. De plus, les modèles de points d'InsightFace lissent les paupières : sur 15 s de vidéo réelle, aucun clignement n'a été mesuré. Les gestes de tête utilisent les 5 points du détecteur (yeux, nez, coins de la bouche), sans modèle supplémentaire. Une photo inclinée, déplacée ou agrandie garde les mêmes rapports entre ces points et ne valide donc aucun geste.
+
+Authentification sans badge : par défaut, un employé enregistré, à la fiche active, reconnu sur 3 analyses consécutives lance seul la vérification. Elle démarre à l'étape 1, déjà presque validée, sans clic du superviseur (`face_check.auto` vaut true). Le bouton manuel reste disponible. Une vérification réussie authentifie l'employé : son rectangle de personne affiche « Authentifié (visage) : Prénom Nom » en vert, comme un badge valide, et aucun badge n'est demandé. L'authentification tombe si le visage reste hors champ plus de 5 s, au bout de 2 minutes, ou si la fiche est désactivée ; il faut alors repasser les étapes. Après un échec, aucune vérification automatique n'est relancée pour cet employé pendant 10 s. Jamais d'authentification sans les 5 étapes réussies ni pour une fiche désactivée. Le nom n'est posé sur un rectangle de personne que si le visage authentifié est dans un seul rectangle et qu'il est le seul dans ce rectangle.
+
+Réglages par variables d'environnement :
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `FACE_RECOGNITION` | `1` | `0` désactive la reconnaissance. |
+| `FACE_AUTO_CHECK` | `1` | `0` désactive le démarrage automatique : la vérification ne se lance plus que par le bouton. |
+| `FACE_MODEL` | `buffalo_s` | Pack InsightFace. `buffalo_l` (celui du prototype) est plus précis mais environ 6 fois plus lent sur le PC portable de test. Changer de pack impose de réenregistrer les visages : les empreintes ne sont comparées qu'à celles du même pack. |
+| `FACE_THRESHOLD` | `0.45` | Ressemblance minimale (cosinus) pour reconnaître une fiche. À calibrer avec les vrais visages et la vraie caméra. |
+| `FACE_DET_SIZE` | `320` | Taille de détection ; plus grand détecte des visages plus petits, plus lentement. |
+| `FACE_YAW_SIGN` | `1` | `-1` si les consignes gauche et droite sont inversées avec la caméra utilisée. |
+| `FACE_PITCH_THRESHOLD` | `0.08` | Amplitude demandée pour « Menton levé ». Plus petit = geste plus facile. |
+
+Limites du prototype : les gestes rendent une photo ou une vidéo figée inutilisable, mais pas une vidéo rejouée qui exécuterait les mêmes gestes. L'ordre fixe des étapes rend ce rejeu un peu plus simple qu'avec des gestes tirés au hasard ; c'est le prix d'un parcours lisible. Pendant les gestes, seule la géométrie du visage est suivie ; l'identité est reconfirmée à la fin.
 
 ## Règles vidéo en présence de plusieurs personnes
 

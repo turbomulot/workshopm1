@@ -15,8 +15,9 @@
 .access-login { max-width: 560px; }
 .access-page form, .access-page label { display: grid; gap: 8px; }
 .access-page form { gap: 16px; }
+.access-page select { font: inherit; width: 100%; padding: 10px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; }
 .access-page input { font: inherit; min-width: 0; width: 100%; padding: 10px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; }
-.access-page input:focus-visible, .access-page button:focus-visible, .access-nav button:focus-visible, .access-page a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.access-page input:focus-visible, .access-page select:focus-visible, .access-page button:focus-visible, .access-nav button:focus-visible, .access-page a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .access-page .access-primary { background: var(--accent); border-color: var(--accent); color: white; }
 .access-muted, .access-page small { color: var(--text-secondary); }
 .access-error { color: #ffc2c4; background: #e5484d16; padding: 12px; border-radius: 6px; overflow-wrap: anywhere; }
@@ -36,6 +37,18 @@
 .access-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .access-actions button { padding: 7px 9px; font-size: 12px; }
 .access-observations li { display: grid; gap: 7px; padding: 12px; background: var(--surface-raised); border-radius: 6px; }
+.access-side { display: grid; gap: 20px; min-width: 0; }
+.access-check { display: grid; gap: 6px; padding: 14px; border-left: 3px solid #fab219; background: var(--surface-raised); border-radius: 6px; }
+.access-check strong { font-size: 18px; color: #ffe2a5; }
+.access-steps { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.access-steps li { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); }
+.access-steps li::before { content: ""; width: 18px; height: 18px; flex: none; display: grid; place-items: center; border: 2px solid var(--border); border-radius: 50%; font-size: 11px; font-weight: 700; }
+.access-steps li.done { color: inherit; }
+.access-steps li.done::before { content: "✓"; border-color: #3fb950; background: #3fb950; color: #0d1117; }
+.access-steps li.current { color: #ffe2a5; font-weight: 600; }
+.access-steps li.current::before { border-color: #fab219; }
+.access-steps li.failed { color: #ff9b9b; }
+.access-steps li.failed::before { content: "✕"; border-color: #f85149; background: #f85149; color: #0d1117; }
 .access-badge { grid-template-columns: minmax(0, 1fr) 260px; align-items: center; }
 .access-badge > div { display: grid; gap: 16px; justify-items: start; }
 .access-badge img { width: 100%; max-width: 260px; border-radius: 6px; }

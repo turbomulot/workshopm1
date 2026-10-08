@@ -8,3 +8,8 @@ ultralytics>=8.3
 # Badges QR (badges.py, qr_vision.py)
 qrcode>=8
 pillow>=10
+# Noms des caméras pour le sélecteur (Windows ; ailleurs elles sont numérotées)
+pygrabber>=0.2; sys_platform == "win32"
+# Reconnaissance faciale (faces.py). Sans ces paquets, le serveur tourne sans elle.
+insightface>=0.7.3
+onnxruntime>=1.18
