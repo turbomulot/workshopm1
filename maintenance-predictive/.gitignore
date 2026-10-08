@@ -1,0 +1,4 @@
+# Données extraites du dump et sorties de l'entraînement : jamais versionnées
+data/
+*.joblib
+*.png
