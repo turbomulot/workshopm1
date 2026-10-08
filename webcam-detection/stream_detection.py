@@ -1,6 +1,8 @@
 """Single camera owner: person detection, QR validation, face recognition and local Flask API."""
 
 import copy
+import functools
+import json
 import os
 import sys
 import threading
@@ -15,6 +17,7 @@ os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 os.environ.setdefault("KMP_BLOCKTIME", "0")
 
 import cv2
+import paho.mqtt.client as mqtt
 import torch
 from flask import Flask, Response, jsonify
 from ultralytics import YOLO
@@ -30,6 +33,36 @@ ROOT = Path(__file__).resolve().parent
 CAMERA_BACKEND = {"darwin": cv2.CAP_AVFOUNDATION, "win32": cv2.CAP_DSHOW}.get(sys.platform, cv2.CAP_ANY)
 MAX_CAMERAS = 6
 RENDER_FPS = float(os.environ.get("RENDER_FPS", "20"))
+
+# Link with the ESP8266 box: its PIR (<base>/sensors, field "pir") wakes the camera,
+# and a passed face check turns its LED green (<base>/vision).
+MQTT_HOST = os.environ.get("MQTT_HOST", "localhost")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "sentinel").rstrip("/")
+# Camera released after this long without PIR motion or person seen; 0 keeps it always on.
+STANDBY_SECONDS = float(os.environ.get("CAMERA_STANDBY_S", "30"))
+# The box forgets a recognition when its presence ends: repeated while it lasts.
+RECOGNISED_REPEAT = 5.0
+# The box's OLED drops the face check after 2.5 s without news: repeated every second.
+CHECK_REPEAT = 1.0
+
+
+def check_message(view):
+    """Face check as the box's OLED shows it: the current step, then the result."""
+    if not view:
+        return None
+    if view["state"] == "running":
+        return {"verification": view["steps"][view["step"] - 1]["key"], "etape": view["step"],
+                "total": view["total"], "restant": view["remaining_s"]}
+    return {"verification": view["state"]}
+
+
+@functools.lru_cache(maxsize=None)
+def placeholder(text):
+    import numpy as np
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(image, text, (25, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+    return cv2.imencode(".jpg", image)[1].tobytes()
 
 
 def camera_names():
@@ -71,8 +104,11 @@ class VisionRuntime:
         self.state = {"detection": False, "personnes": 0, "latence_ms": 0,
                       "traitement_ms": 0, "heure": "", "camera_connected": False,
                       "timestamp": None, "badges": [], "error": None, "fps": 0.0,
-                      "analyse_ms": 0, "age_image_ms": 0, "confiance": None}
+                      "analyse_ms": 0, "age_image_ms": 0, "confiance": None, "veille": False}
         self.faces = FaceRecognizer(store, self.log)
+        self.last_presence = None  # monotonic time of the last PIR motion or person seen
+        self.mqtt = None
+        self.mqtt_connected = False
 
     def snapshot(self, private=False):
         with self.lock:
@@ -94,6 +130,60 @@ class VisionRuntime:
                     "niveau": level, "message": message}
             self.logs.append(line)
         print(f"[{line['heure']}] {level} : {message}", flush=True)
+
+    def start_mqtt(self):
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        client.on_connect = self.on_mqtt_connect
+        client.on_disconnect = lambda *args: setattr(self, "mqtt_connected", False)
+        client.on_message = self.on_mqtt_message
+        # Connection and reconnections happen in paho's own thread.
+        client.connect_async(MQTT_HOST, MQTT_PORT)
+        client.loop_start()
+        self.mqtt = client
+
+    def on_mqtt_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code.is_failure:
+            return
+        client.subscribe(f"{MQTT_BASE_TOPIC}/sensors")
+        self.mqtt_connected = True
+        self.log("INFO", f"Broker MQTT connecté ({MQTT_HOST}:{MQTT_PORT}) : caméra pilotée par le PIR")
+
+    def on_mqtt_message(self, client, userdata, message):
+        try:
+            measure = json.loads(message.payload)
+        except ValueError:
+            return
+        if isinstance(measure, dict) and measure.get("pir") == 1:
+            self.last_presence = time.monotonic()
+
+    def camera_wanted(self):
+        """Without the broker, or with standby disabled, the camera stays on as before."""
+        if STANDBY_SECONDS <= 0 or not self.mqtt_connected:
+            return True
+        return self.last_presence is not None and time.monotonic() - self.last_presence < STANDBY_SECONDS
+
+    def report_to_box(self):
+        """Sends the box the face check steps (OLED) and a passed check (green LED).
+        No name leaves this service."""
+        last_recognised, was_recognised = 0.0, False
+        last_check, last_check_at = None, 0.0
+        while not self.stop.wait(0.2):
+            if not self.mqtt_connected:
+                continue
+            now = time.monotonic()
+            recognised = self.faces.any_authenticated()
+            if recognised and (not was_recognised or now - last_recognised >= RECOGNISED_REPEAT):
+                self.publish_vision({"reconnu": True})
+                last_recognised = now
+            was_recognised = recognised
+            check = check_message(self.faces.snapshot()["face_check"])
+            if check and (check != last_check or now - last_check_at >= CHECK_REPEAT):
+                self.publish_vision(check)
+                last_check_at = now
+            last_check = check
+
+    def publish_vision(self, message):
+        self.mqtt.publish(f"{MQTT_BASE_TOPIC}/vision", json.dumps(message))
 
     def unavailable(self, message):
         with self.lock:
@@ -137,8 +227,28 @@ class VisionRuntime:
     def capture(self):
         """This thread alone owns VideoCapture, including release/reconnection."""
         camera = None
+        asleep = False
         try:
             while not self.stop.is_set():
+                if not self.camera_wanted():
+                    if not asleep:
+                        if camera is not None:
+                            camera.release()
+                            camera = None
+                            self.log("INFO", f"Caméra en veille ({STANDBY_SECONDS:.0f} s sans présence)")
+                        self.capture_buffer.invalidate()
+                        self.unavailable("Caméra en veille : aucune présence détectée.")
+                        with self.lock:
+                            self.state["veille"] = True
+                        asleep = True
+                    # Not camera_switch.wait: a pending switch would make it return at once.
+                    self.stop.wait(0.2)
+                    continue
+                if asleep:
+                    asleep = False
+                    with self.lock:
+                        self.state["veille"] = False
+                    self.log("INFO", "Mouvement détecté : caméra allumée")
                 if self.camera_switch.is_set():
                     self.camera_switch.clear()
                     if camera is not None:
@@ -230,8 +340,9 @@ class VisionRuntime:
                 self.output_changed.notify_all()
 
     def run(self):
-        capture_thread = face_thread = render_thread = None
+        capture_thread = face_thread = render_thread = report_thread = None
         try:
+            self.start_mqtt()
             os.environ.setdefault("YOLO_CONFIG_DIR", str(ROOT.parent / ".venv" / "yolo-config"))
             # torch defaults to one thread per core; with the face thread beside it,
             # 4 is faster on hybrid laptop CPUs (YOLO 140 -> 65 ms on a Core Ultra 7 155U).
@@ -244,6 +355,8 @@ class VisionRuntime:
             face_thread.start()
             render_thread = threading.Thread(target=self.render, args=(reader,), daemon=True)
             render_thread.start()
+            report_thread = threading.Thread(target=self.report_to_box, daemon=True)
+            report_thread.start()
             sequence = 0
             generation = -1
             had_person = False
@@ -274,6 +387,8 @@ class VisionRuntime:
                     continue
                 detected = bool(boxes)
                 clock = time.monotonic()
+                if detected:
+                    self.last_presence = clock
                 if detected != had_person and clock - last_presence_event >= 2:
                     self.log("INFO", "Présence détectée" if detected else "Zone libre")
                     last_presence_event = clock
@@ -296,7 +411,9 @@ class VisionRuntime:
             self.log("ERREUR", str(error))
         finally:
             self.stop.set()
-            for thread in (capture_thread, face_thread, render_thread):
+            if self.mqtt is not None:
+                self.mqtt.loop_stop()
+            for thread in (capture_thread, face_thread, render_thread, report_thread):
                 if thread is not None:
                     thread.join(timeout=5)
             if self.stop.is_set():
@@ -305,7 +422,6 @@ class VisionRuntime:
                 self.unavailable(error or "Service vision arrêté.")
 
     def images(self):
-        placeholder = None
         sequence = -1
         sent_at = 0.0
         while not self.stop.is_set():
@@ -316,15 +432,10 @@ class VisionRuntime:
                     break
                 sequence = self.output_sequence
                 frame = self.frame if time.monotonic() - self.last_frame_at <= 3 else None
+                asleep = self.state["veille"]
             if frame is None:
-                if placeholder is None:
-                    import numpy as np
-                    image = np.zeros((480, 640, 3), dtype=np.uint8)
-                    cv2.putText(image, "Camera indisponible - reconnexion...", (25, 240),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-                    _, jpeg = cv2.imencode(".jpg", image)
-                    placeholder = jpeg.tobytes()
-                frame = placeholder
+                frame = placeholder("Camera en veille - en attente du PIR" if asleep
+                                    else "Camera indisponible - reconnexion...")
             sent_at = time.monotonic()
             yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(frame)).encode()
                    + b"\r\n\r\n" + frame + b"\r\n")

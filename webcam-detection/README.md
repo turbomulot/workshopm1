@@ -17,6 +17,20 @@ Voir [le guide de reprise DEV web](../docs/REPRISE_DEV_WEB_BADGES.md) pour le co
 
 Le journal de présence du serveur indique désormais « présence détectée », sans assimiler automatiquement une personne à un intrus. La capture demande 1280 x 720 pour lire les QR puis redimensionne à 640 x 480 pour YOLO. L'état ajoute le temps de traitement complet, la connexion caméra et un horodatage ; l'état badges est disponible sur la route protégée `/api/v1/access/status`.
 
+## Lien avec le boîtier ESP8266 (MQTT)
+
+Le serveur écoute le PIR du boîtier sur `sentinel/sensors` (champ `pir`). La caméra s'allume au premier mouvement et se met en veille après 30 s sans mouvement ni personne vue par YOLO ; `/status` indique alors `"veille": true` et `/video` affiche « Camera en veille ». Quand un employé réussit la vérification faciale, le serveur publie `{"reconnu": true}` sur `sentinel/vision` (sans nom), puis le répète toutes les 5 s tant qu'il reste dans le champ : le boîtier passe sa LED du rouge au vert.
+
+Pendant la vérification faciale, le serveur publie aussi chaque seconde l'étape en cours sur `sentinel/vision` (`{"verification": "left", "etape": 2, "total": 5, "restant": 8}`), puis le résultat (`{"verification": "valid" | "refused" | "disabled"}`). L'écran OLED du boîtier affiche la consigne à la place des mesures, et revient aux mesures 2,5 s après le dernier message.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `MQTT_HOST` / `MQTT_PORT` | `localhost` / `1883` | Broker MQTT |
+| `MQTT_BASE_TOPIC` | `sentinel` | Racine des topics |
+| `CAMERA_STANDBY_S` | `30` | Délai avant veille ; `0` laisse la caméra toujours allumée |
+
+Sans broker joignable, la caméra reste allumée en permanence, comme avant.
+
 ## Sommaire
 
 1. [Ce que fait ce module](#1-ce-que-fait-ce-module)

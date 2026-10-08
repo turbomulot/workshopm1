@@ -8,7 +8,7 @@ import { startMqtt } from './mqtt.js'
 import { createRoutes } from './routes.js'
 
 const ALERT_TYPES = ['gas', 'motion', 'temp']
-const ALERT_LEVELS = ['warn', 'critical']
+const ALERT_LEVELS = ['info', 'warn', 'critical']
 
 const app = express()
 const server = http.createServer(app)

@@ -156,6 +156,11 @@ class FaceRecognizer:
                     "faces": [{"authenticated": False, **{k: v for k, v in face.items() if k != "bbox"}} for face in faces],
                     "face_check": self.check_view(now)}
 
+    def any_authenticated(self):
+        """True while an employee who passed the check is still in view (AUTH_GRACE)."""
+        with self.lock:
+            return bool(self.authenticated)
+
     def overlay(self, generation):
         now = time.monotonic()
         with self.lock:

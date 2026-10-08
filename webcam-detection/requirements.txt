@@ -3,6 +3,7 @@
 # (3.9 sur le Mac du développement, 3.13 sur le PC serveur Windows).
 # Pour figer une installation précise : pip freeze > requirements.lock.txt
 flask>=3.1
+paho-mqtt>=2.0
 opencv-python>=4.10
 ultralytics>=8.3
 # Badges QR (badges.py, qr_vision.py)
