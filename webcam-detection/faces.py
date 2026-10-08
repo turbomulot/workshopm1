@@ -6,6 +6,7 @@ thread on the shared capture buffer so YOLO and the video stream keep their pace
 
 import math
 import os
+import random
 import threading
 import time
 
@@ -29,10 +30,9 @@ PITCH_THRESHOLD = float(os.environ.get("FACE_PITCH_THRESHOLD", "0.08"))
 STABLE_NEEDED = 3        # consecutive recognitions before the gestures start
 BASELINE_FRAMES = 3      # frontal poses averaged as the reference for the gestures
 HOLD_FRAMES = 2          # a gesture must hold on consecutive analyses (landmark noise)
-SEARCH_TIMEOUT = 10.0
-CHALLENGE_TIMEOUT = 8.0
-VERIFY_TIMEOUT = 5.0
-LOST_TIMEOUT = 1.5
+POSITION_COUNT = 3       # positions drawn at random for each check
+# Time for each position; the identification at the start of the first one counts in it.
+POSITION_SECONDS = float(os.environ.get("FACE_POSITION_S", "6"))
 RESULT_SECONDS = 5.0
 IDLE_PERIOD = 0.25       # outside a check, 4 analyses per second are enough
 CHECK_PERIOD = 0.08      # during a check, ~12 per second still catch a slow blink
@@ -43,23 +43,25 @@ THREADS = int(os.environ.get("FACE_THREADS", "2"))
 # its success authenticates them without a badge.
 AUTO_CHECK = os.environ.get("FACE_AUTO_CHECK", "1") != "0"
 RETRY_COOLDOWN = 10.0    # no automatic check for this employee after a failure
-# A passed check stays valid this long, even out of view: the same employee coming
-# back is recognised by face alone, without the gestures.
-AUTH_MAX = float(os.environ.get("FACE_AUTH_MINUTES", "30")) * 60
+# A passed face check stays valid this long, even out of view: the same
+# employee coming back is recognised by face alone, without the positions.
+AUTH_MAX = float(os.environ.get("ACCESS_VALID_S", "60"))
 ANALYSIS_WIDTH = 640
 FRESH_SECONDS = 1.0
 
-# (key, checklist label, instruction). A flat photo, even tilted, keeps the nose
-# at the same place relative to the eyes and mouth: it cannot pass the gestures.
-STEPS = [
-    ("face", "Reconnaissance de face", "Placez-vous seul face à la caméra et regardez-la"),
-    ("left", "Tête à gauche", "Tournez la tête vers votre gauche"),
-    ("right", "Tête à droite", "Tournez la tête vers votre droite"),
-    ("up", "Menton levé", "Levez nettement le menton, comme pour regarder le plafond"),
-    ("verify", "Confirmation de face", "Revenez de face pour confirmer"),
-]
-GESTURES = {"left", "right", "up"}
-TIMEOUTS = {"face": SEARCH_TIMEOUT, "verify": VERIFY_TIMEOUT}
+# key -> (checklist label, instruction). A flat photo, even tilted, keeps the nose
+# at the same place relative to the eyes and mouth: it cannot pass the positions.
+POSITIONS = {
+    "left": ("Tête à gauche", "Tournez la tête vers votre gauche"),
+    "right": ("Tête à droite", "Tournez la tête vers votre droite"),
+    "up": ("Menton levé", "Levez nettement le menton, comme pour regarder le plafond"),
+    "down": ("Menton baissé", "Baissez nettement le menton, comme pour regarder le sol"),
+}
+
+
+def choose_positions():
+    """Random positions, so a recorded video of an earlier check cannot be replayed."""
+    return random.sample(list(POSITIONS), POSITION_COUNT)
 
 
 class FaceError(Exception):
@@ -118,6 +120,8 @@ def gesture_done(key, current, baseline):
         return yaw > YAW_THRESHOLD
     if key == "right":
         return yaw < -YAW_THRESHOLD
+    if key == "down":
+        return current[1] - baseline[1] > PITCH_THRESHOLD
     return current[1] - baseline[1] < -PITCH_THRESHOLD
 
 
@@ -138,6 +142,8 @@ class FaceRecognizer:
         self.stable = (None, 0)  # (employee_id, consecutive recognitions) outside a check
         self.cooldown = {}       # employee_id -> no automatic check before this time
         self.authenticated = {}  # employee_id -> {"since", "seen"}
+        # The ESP8266 PIR starts the checks when the box is connected (start_check).
+        self.auto_check = AUTO_CHECK
 
     def set_engine(self, state, message):
         with self.lock:
@@ -153,7 +159,7 @@ class FaceRecognizer:
         now = time.monotonic()
         with self.lock:
             faces = self.faces if now - self.faces_at <= FRESH_SECONDS else []
-            return {"face_engine": dict(self.engine, auto_check=AUTO_CHECK),
+            return {"face_engine": dict(self.engine, auto_check=self.auto_check),
                     "faces": [{"authenticated": False, **{k: v for k, v in face.items() if k != "bbox"}} for face in faces],
                     "face_check": self.check_view(now)}
 
@@ -176,19 +182,20 @@ class FaceRecognizer:
         if self.engine["state"] != "ready":
             raise FaceError(self.engine["message"], 503)
 
-    def start_check(self):
+    def start_check(self, auto=False):
         with self.lock:
             self.ready()
             if self.check:
                 raise FaceError("Une vérification est déjà en cours.")
             if not self.gallery:
                 raise FaceError("Aucun visage enregistré : enregistrer d'abord le visage d'un employé.")
-            self.new_check(time.monotonic())
+            self.new_check(None, auto=auto)
         self.log("INFO", "Vérification faciale démarrée")
 
     def new_check(self, now, target=None, stable=0, sample=None, auto=False):
-        """Under the lock: start at the first step."""
-        self.check = {"index": 0, "started": now, "step_started": now, "seen": now, "target": target,
+        """Under the lock: start at the first position. now=None starts its timer with
+        the first camera image, so the camera start-up does not eat into the first position."""
+        self.check = {"index": 0, "positions": choose_positions(), "step_started": now, "target": target,
                       "stable": stable, "samples": [sample] if sample else [], "baseline": None,
                       "hits": 0, "auto": auto}
         self.result = None
@@ -277,7 +284,8 @@ class FaceRecognizer:
             self.publish(detected, image, factor, generation)
 
     def gesture_step(self):
-        return bool(self.check) and STEPS[self.check["index"]][0] in GESTURES
+        """Identity known: the remaining analyses only follow the head position."""
+        return bool(self.check) and self.check["baseline"] is not None
 
     def modules(self):
         """Only what the current step needs: gestures use the detector's 5 points."""
@@ -307,6 +315,8 @@ class FaceRecognizer:
         started = False
         with self.lock:
             self.refresh_authenticated(faces if target is None else [], now)
+            if image is not None and self.check and self.check["step_started"] is None:
+                self.check["step_started"] = now
             if image is not None:
                 self.faces = [{k: v for k, v in face.items() if k != "raw"} for face in faces]
                 self.faces_at, self.faces_generation = now, generation
@@ -336,7 +346,7 @@ class FaceRecognizer:
 
     def auto_start(self, main, now):
         """Under the lock: start the check once an active, unauthenticated employee is stably recognised."""
-        if not AUTO_CHECK or self.check or self.engine["state"] != "ready":
+        if not self.auto_check or self.check or self.engine["state"] != "ready":
             self.stable = (None, 0)
             return False
         employee_id = main["employee_id"] if main and main["active"] else None
@@ -356,12 +366,15 @@ class FaceRecognizer:
         check = self.check
         if not check:
             return None
-        if main:
-            check["seen"] = now
-        key, label, _ = STEPS[check["index"]]
-        timed_out = now - check["step_started"] > TIMEOUTS.get(key, CHALLENGE_TIMEOUT)
-        if key == "face":
+        if check["step_started"] is None:
+            return None
+        key = check["positions"][check["index"]]
+        timed_out = now - check["step_started"] > POSITION_SECONDS
+        if check["baseline"] is None:
+            # Identification, at the start of the first position.
             if main and main["employee_id"]:
+                if main["employee_id"] in self.authenticated and main["active"]:
+                    return self.finish(main["employee_id"], "valid", f"Accès accepté : {main['name']} (déjà vérifié)", now)
                 if main["employee_id"] != check["target"]:
                     check.update(target=main["employee_id"], stable=0, samples=[])
                 check["stable"] += 1
@@ -370,37 +383,25 @@ class FaceRecognizer:
                 check.update(target=None, stable=0, samples=[])
             if check["stable"] >= STABLE_NEEDED and len(check["samples"]) >= BASELINE_FRAMES:
                 check["baseline"] = tuple(np.median(check["samples"][-BASELINE_FRAMES:], axis=0))
-                self.next_step(check, now)
             elif timed_out:
                 return self.finish(check["target"], "refused", "Aucun visage enregistré reconnu.", now)
-        elif key in GESTURES:
-            if main:
-                done = gesture_done(key, pose(main["raw"]), check["baseline"])
-                check["hits"] = check["hits"] + 1 if done else 0
-            if check["hits"] >= HOLD_FRAMES:
-                self.next_step(check, now)
-            elif now - check["seen"] > LOST_TIMEOUT:
-                return self.finish(check["target"], "refused", f"Visage perdu à l'étape « {label} ».", now)
-            elif timed_out:
-                return self.finish(check["target"], "refused", f"Délai dépassé à l'étape « {label} ».", now)
-        else:
-            if main and main["employee_id"] == check["target"]:
-                check["hits"] += 1
-            if check["hits"] >= 2:
+            return None
+        if main:
+            done = gesture_done(key, pose(main["raw"]), check["baseline"])
+            check["hits"] = check["hits"] + 1 if done else 0
+        if check["hits"] >= HOLD_FRAMES:
+            check.update(index=check["index"] + 1, step_started=now, hits=0)
+            if check["index"] == len(check["positions"]):
                 first, last, active = self.gallery.get(check["target"], ("?", "?", False))[:3]
                 if active:
                     return self.finish(check["target"], "valid", f"Accès accepté : {first} {last}", now)
                 return self.finish(check["target"], "disabled", f"Visage reconnu, fiche désactivée : {first} {last}", now)
-            if timed_out:
-                return self.finish(check["target"], "refused", "Identité non confirmée de face.", now)
+        elif timed_out:
+            return self.finish(check["target"], "refused", f"Délai dépassé : « {POSITIONS[key][0]} ».", now)
         return None
 
     @staticmethod
-    def next_step(check, now):
-        check.update(index=check["index"] + 1, step_started=now, hits=0)
-
-    @staticmethod
-    def steps_view(index, outcome=None):
+    def steps_view(positions, index, outcome=None):
         """Checklist: done / current / pending, the current one 'failed' on refusal."""
         def state(position):
             if outcome == "valid" or position < index:
@@ -408,15 +409,17 @@ class FaceRecognizer:
             if position == index:
                 return "failed" if outcome == "refused" else "current"
             return "pending"
-        return [{"key": key, "label": label, "state": state(position)} for position, (key, label, _) in enumerate(STEPS)]
+        return [{"key": key, "label": POSITIONS[key][0], "state": state(position)}
+                for position, key in enumerate(positions)]
 
     def finish(self, employee_id, result, message, now):
         outcome = "valid" if result in ("valid", "disabled") else "refused"
-        steps = self.steps_view(self.check["index"], outcome) if self.check else []
+        steps = self.steps_view(self.check["positions"], self.check["index"], outcome) if self.check else []
         self.check = None
         self.result = {"state": result, "message": message, "until": now + RESULT_SECONDS, "steps": steps}
         if employee_id and result == "valid":
-            self.authenticated[employee_id] = {"since": now, "seen": now}
+            # An employee already authenticated keeps the start of their minute.
+            self.authenticated.setdefault(employee_id, {"since": now, "seen": now})
         elif employee_id:
             self.cooldown[employee_id] = now + RETRY_COOLDOWN
         return employee_id, result, message
@@ -425,11 +428,11 @@ class FaceRecognizer:
         check = self.check
         if check:
             index = check["index"]
-            key, _, instruction = STEPS[index]
-            limit = TIMEOUTS.get(key, CHALLENGE_TIMEOUT)
-            return {"state": "running", "auto": check["auto"], "step": index + 1, "total": len(STEPS),
-                    "steps": self.steps_view(index), "instruction": instruction,
-                    "remaining_s": math.ceil(max(0, limit - (now - check["step_started"])))}
+            positions = check["positions"]
+            elapsed = now - check["step_started"] if check["step_started"] is not None else 0
+            return {"state": "running", "auto": check["auto"], "step": index + 1, "total": len(positions),
+                    "steps": self.steps_view(positions, index), "instruction": POSITIONS[positions[index]][1],
+                    "remaining_s": math.ceil(max(0, POSITION_SECONDS - elapsed))}
         if self.result and now < self.result["until"]:
             return {key: self.result[key] for key in ("state", "message", "steps")}
         return None

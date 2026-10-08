@@ -34,7 +34,7 @@ class FakeFace:
 FRONT = FakeFace(1)
 GESTURES = [FakeFace(1, turn=0.3)] * 2 + [FakeFace(1, turn=-0.3)] * 2 + [FakeFace(1, chin=0.15)] * 2
 # After an automatic start one more frontal frame completes the reference pose.
-LIVE = [FRONT] + GESTURES + [FRONT] * 2
+LIVE = [FRONT] + GESTURES
 
 
 class FaceTests(unittest.TestCase):
@@ -47,6 +47,10 @@ class FaceTests(unittest.TestCase):
         self.faces.set_engine("ready", "Reconnaissance faciale active.")
         self.client = self.app.test_client()
         self.headers = {"Authorization": f"Bearer {self.store.admin_token}"}
+        # Positions are drawn at random: fixed here so the gestures below match.
+        patcher = mock.patch("faces.choose_positions", return_value=["left", "right", "up"])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def employee(self, first="Camille", last="Démo"):
         return self.client.post("/api/v1/employees", headers=self.headers,
@@ -121,22 +125,23 @@ class FaceTests(unittest.TestCase):
         self.enroll(camille, 1)
         check = self.start_manual_check()
         self.assertEqual(self.client.post("/api/v1/faces/check", headers=self.headers).status_code, 409)
-        self.assertEqual((check["state"], check["step"], check["total"]), ("running", 2, len(faces.STEPS)))
-        self.assertEqual([step["state"] for step in check["steps"]], ["done", "current", "pending", "pending", "pending"])
-        # Out of order: chin up and right turn do nothing during the left-turn step.
+        self.assertEqual((check["state"], check["step"], check["total"]), ("running", 1, faces.POSITION_COUNT))
+        self.assertEqual(check["instruction"], faces.POSITIONS["left"][1])
+        self.assertEqual(check["remaining_s"], faces.POSITION_SECONDS)
+        self.assertEqual([step["state"] for step in check["steps"]], ["current", "pending", "pending"])
+        # Out of order: chin up and right turn do nothing during the left-turn position.
         for face in [FakeFace(1, chin=0.15)] * 2 + [FakeFace(1, turn=-0.3)] * 2:
             self.show(face)
-        self.assertEqual(self.faces.snapshot()["face_check"]["step"], 2)
+        self.assertEqual(self.faces.snapshot()["face_check"]["step"], 1)
         # One frame is not enough: the gesture must hold.
         self.show(FakeFace(1, turn=0.3))
         self.show(FRONT)
-        self.assertEqual(self.faces.snapshot()["face_check"]["step"], 2)
-        for face in GESTURES:
+        self.assertEqual(self.faces.snapshot()["face_check"]["step"], 1)
+        for face in GESTURES[:4]:
             self.show(face)
-        check = self.faces.snapshot()["face_check"]
-        self.assertEqual((check["step"], check["instruction"]), (5, faces.STEPS[4][2]))
-        self.show(FRONT)
-        self.show(FRONT)
+        self.assertEqual(self.faces.snapshot()["face_check"]["step"], 3)
+        for face in GESTURES[4:]:
+            self.show(face)
         result = self.status()["face_check"]
         self.assertEqual(result["state"], "valid")
         self.assertIn("Camille Démo", result["message"])
@@ -150,7 +155,7 @@ class FaceTests(unittest.TestCase):
         self.client.patch(f"/api/v1/employees/{camille['id']}", headers=self.headers, json={"active": False})
         self.faces.reload()
         self.start_manual_check()
-        for face in GESTURES + [FRONT] * 2:
+        for face in GESTURES:
             self.show(face)
         self.assertEqual(self.status()["face_check"]["state"], "disabled")
 
@@ -161,12 +166,12 @@ class FaceTests(unittest.TestCase):
         for _ in range(10):
             self.show(FRONT)
         with self.faces.lock:
-            finished = self.faces.advance(None, time.monotonic() + faces.CHALLENGE_TIMEOUT + 1)
+            finished = self.faces.advance(None, time.monotonic() + faces.POSITION_SECONDS + 1)
         self.assertEqual(finished[1], "refused")
         self.assertIn("Tête à gauche", finished[2])
         result = self.faces.snapshot()["face_check"]
         self.assertEqual(result["state"], "refused")
-        self.assertEqual([step["state"] for step in result["steps"]], ["done", "failed", "pending", "pending", "pending"])
+        self.assertEqual([step["state"] for step in result["steps"]], ["failed", "pending", "pending"])
 
     def test_tilted_photo_does_not_count_as_a_head_turn(self):
         # A flat photo shifted or scaled keeps every ratio: still the frontal pose.
@@ -174,13 +179,22 @@ class FaceTests(unittest.TestCase):
         tilted.kps = tilted.kps * (0.7, 1.0) + (40, 10)
         self.assertFalse(faces.gesture_done("left", faces.pose(tilted), faces.pose(FRONT)))
         self.assertFalse(faces.gesture_done("up", faces.pose(tilted), faces.pose(FRONT)))
+        self.assertFalse(faces.gesture_done("down", faces.pose(tilted), faces.pose(FRONT)))
+
+    def test_chin_down_and_random_positions(self):
+        self.assertTrue(faces.gesture_done("down", faces.pose(FakeFace(1, chin=-0.15)), faces.pose(FRONT)))
+        self.assertFalse(faces.gesture_done("down", faces.pose(FakeFace(1, chin=0.15)), faces.pose(FRONT)))
+        mock.patch.stopall()
+        drawn = {tuple(faces.choose_positions()) for _ in range(50)}
+        self.assertTrue(all(len(set(keys)) == faces.POSITION_COUNT and set(keys) <= set(faces.POSITIONS) for keys in drawn))
+        self.assertGreater(len(drawn), 1)
 
     def test_unknown_face_is_refused_after_search_timeout(self):
         self.enroll(self.employee(), 1)
         self.client.post("/api/v1/faces/check", headers=self.headers)
         self.show(FakeFace(99))
         with self.faces.lock:
-            finished = self.faces.advance(None, time.monotonic() + faces.SEARCH_TIMEOUT + 1)
+            finished = self.faces.advance(None, time.monotonic() + faces.POSITION_SECONDS + 1)
         self.assertEqual(finished, (None, "refused", "Aucun visage enregistré reconnu."))
 
     def auto_start(self, seed=1):
@@ -230,6 +244,24 @@ class FaceTests(unittest.TestCase):
         self.faces.stable = (None, 0)
         self.assertEqual(self.auto_start()["state"], "running")
 
+    def test_same_person_within_a_minute_skips_the_positions(self):
+        camille = self.employee()
+        self.enroll(camille, 1)
+        self.start_manual_check()
+        for face in GESTURES:
+            self.show(face)
+        self.assertEqual(self.faces.snapshot()["face_check"]["state"], "valid")
+        since = self.faces.authenticated[camille["id"]]["since"]
+        # Back in front of the PIR: a new check ends at once, without positions.
+        self.assertEqual(self.client.post("/api/v1/faces/check", headers=self.headers).status_code, 202)
+        self.show(FRONT)
+        result = self.faces.snapshot()["face_check"]
+        self.assertEqual(result["state"], "valid")
+        self.assertIn("déjà vérifié", result["message"])
+        # The minute is not extended by coming back.
+        self.assertEqual(self.faces.authenticated[camille["id"]]["since"], since)
+        self.assertEqual(faces.AUTH_MAX, 60)
+
     def test_other_person_is_not_green_and_needs_their_own_check(self):
         camille = self.employee()
         self.enroll(camille, 1)
@@ -255,7 +287,7 @@ class FaceTests(unittest.TestCase):
         self.auto_start()
         self.show(FRONT)
         with self.faces.lock:
-            finished = self.faces.advance(None, time.monotonic() + faces.LOST_TIMEOUT + 1)
+            finished = self.faces.advance(None, time.monotonic() + faces.POSITION_SECONDS + 1)
         self.assertEqual(finished[1], "refused")
         self.assertNotIn(camille["id"], self.faces.authenticated)
         self.assertEqual(self.auto_start()["state"], "refused")
@@ -266,8 +298,9 @@ class FaceTests(unittest.TestCase):
         camille = self.employee()
         self.enroll(camille, 1)
         self.assertIsNone(self.auto_start(99))
-        with mock.patch("faces.AUTO_CHECK", False):
-            self.assertIsNone(self.auto_start())
+        self.faces.auto_check = False
+        self.assertIsNone(self.auto_start())
+        self.faces.auto_check = True
         self.client.patch(f"/api/v1/employees/{camille['id']}", headers=self.headers, json={"active": False})
         self.faces.reload()
         self.assertIsNone(self.auto_start())

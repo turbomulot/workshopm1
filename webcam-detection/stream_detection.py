@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+import urllib.request
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -22,9 +23,10 @@ import torch
 from flask import Flask, Response, jsonify
 from ultralytics import YOLO
 
+from access_session import AccessSession
 from badges import BadgeStore, create_badge_api, require_admin
 from capture_buffer import CaptureBuffer
-from faces import FaceRecognizer, annotate_faces, authenticated_people, create_face_api
+from faces import AUTH_MAX as FACE_AUTH_SECONDS, AUTO_CHECK, FaceError, FaceRecognizer, annotate_faces, authenticated_people, create_face_api
 from qr_vision import QRVision, associate_codes
 
 ROOT = Path(__file__).resolve().parent
@@ -34,27 +36,23 @@ CAMERA_BACKEND = {"darwin": cv2.CAP_AVFOUNDATION, "win32": cv2.CAP_DSHOW}.get(sy
 MAX_CAMERAS = 6
 RENDER_FPS = float(os.environ.get("RENDER_FPS", "20"))
 
-# Link with the ESP8266 box: its PIR (<base>/sensors, field "pir") wakes the camera,
-# and a passed face check turns its LED green (<base>/vision).
+# Link with the ESP8266 box: its PIR (<base>/sensors, field "pir") starts the access
+# sequence (access_session.py); its LED and OLED follow it through <base>/vision.
 MQTT_HOST = os.environ.get("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "sentinel").rstrip("/")
-# Camera released after this long without PIR motion or person seen; 0 keeps it always on.
+# After an alert, camera released once nobody was seen for this long; 0 keeps it always on.
 STANDBY_SECONDS = float(os.environ.get("CAMERA_STANDBY_S", "30"))
 # The box forgets a recognition when its presence ends: repeated while it lasts.
 RECOGNISED_REPEAT = 5.0
-# The box's OLED drops the face check after 2.5 s without news: repeated every second.
-CHECK_REPEAT = 1.0
-
-
-def check_message(view):
-    """Face check as the box's OLED shows it: the current step, then the result."""
-    if not view:
-        return None
-    if view["state"] == "running":
-        return {"verification": view["steps"][view["step"] - 1]["key"], "etape": view["step"],
-                "total": view["total"], "restant": view["remaining_s"]}
-    return {"verification": view["state"]}
+# The box's OLED goes back to the sensors 2.5 s without news: repeated every second.
+SCREEN_REPEAT = 1.0
+# After an alert, the person has left the camera field once unseen this long (LED back from red).
+ALERT_CLEAR_SECONDS = float(os.environ.get("ACCESS_ALERT_CLEAR_S", "3"))
+# The Employees & badges page polls /api/v1/access/status every second: camera kept on meanwhile.
+SUPERVISION_SECONDS = 5.0
+# Unidentified person: alert recorded by the backend (POST /api/v1/alerts).
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3000").rstrip("/")
 
 
 @functools.lru_cache(maxsize=None)
@@ -107,6 +105,14 @@ class VisionRuntime:
                       "analyse_ms": 0, "age_image_ms": 0, "confiance": None, "veille": False}
         self.faces = FaceRecognizer(store, self.log)
         self.last_presence = None  # monotonic time of the last PIR motion or person seen
+        self.last_pir = None
+        self.motion = False        # PIR went from 0 to 1, not yet seen by supervise_access
+        self.badge_valid_at = None
+        self.face_start_failed = False
+        self.last_person_seen = None   # monotonic time YOLO last saw a person
+        self.supervised_at = None      # last poll of the Employees & badges page
+        self.badge_person = None       # {"name", "at"}: last valid badge, labels the person box
+        self.access = AccessSession()
         self.mqtt = None
         self.mqtt_connected = False
 
@@ -134,7 +140,7 @@ class VisionRuntime:
     def start_mqtt(self):
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         client.on_connect = self.on_mqtt_connect
-        client.on_disconnect = lambda *args: setattr(self, "mqtt_connected", False)
+        client.on_disconnect = self.on_mqtt_disconnect
         client.on_message = self.on_mqtt_message
         # Connection and reconnections happen in paho's own thread.
         client.connect_async(MQTT_HOST, MQTT_PORT)
@@ -146,44 +152,122 @@ class VisionRuntime:
             return
         client.subscribe(f"{MQTT_BASE_TOPIC}/sensors")
         self.mqtt_connected = True
+        # The PIR now starts the face checks: no more check started by recognition alone.
+        self.faces.auto_check = False
         self.log("INFO", f"Broker MQTT connecté ({MQTT_HOST}:{MQTT_PORT}) : caméra pilotée par le PIR")
+
+    def on_mqtt_disconnect(self, *args):
+        self.mqtt_connected = False
+        self.faces.auto_check = AUTO_CHECK
 
     def on_mqtt_message(self, client, userdata, message):
         try:
             measure = json.loads(message.payload)
         except ValueError:
             return
-        if isinstance(measure, dict) and measure.get("pir") == 1:
+        if not isinstance(measure, dict) or measure.get("pir") not in (0, 1):
+            return
+        pir = measure["pir"]
+        if pir == 1:
             self.last_presence = time.monotonic()
+            # Only a new motion starts a sequence: someone staying in front does not loop it.
+            if self.last_pir != 1:
+                self.motion = True
+        self.last_pir = pir
 
     def camera_wanted(self):
         """Without the broker, or with standby disabled, the camera stays on as before."""
         if STANDBY_SECONDS <= 0 or not self.mqtt_connected:
             return True
-        return self.last_presence is not None and time.monotonic() - self.last_presence < STANDBY_SECONDS
+        supervised = self.supervised_at is not None and time.monotonic() - self.supervised_at < SUPERVISION_SECONDS
+        return supervised or self.access.active()
 
-    def report_to_box(self):
-        """Sends the box the face check steps (OLED) and whether the face in front of the
-        camera passed a check in the last 30 min (green LED) or not (red). No name is sent."""
-        last_recognised, was_recognised = 0.0, None
-        last_check, last_check_at = None, 0.0
+    def supervision_status(self):
+        """Status for the Employees & badges page; its polling keeps the camera on."""
+        self.supervised_at = time.monotonic()
+        return self.snapshot(private=True)
+
+    def badge_label(self, boxes):
+        """{0: name} while a badge accepted in this session is valid and one person alone is in view."""
+        badge = self.badge_person
+        if badge is None or len(boxes) != 1 or time.monotonic() - badge["at"] > FACE_AUTH_SECONDS:
+            return {}
+        return {0: badge["name"]}
+
+    def supervise_access(self):
+        """Runs the access sequence and keeps the box's LED and OLED in step. No name is sent."""
+        last_screen, last_screen_at, last_recognised_at, last_alert_at = None, 0.0, 0.0, 0.0
         while not self.stop.wait(0.2):
+            now = time.monotonic()
+            motion, self.motion = self.motion, False
+            badge = self.badge_valid_at is not None and now - self.badge_valid_at < 1
+            face = self.faces.main_face_authenticated() is True
+            # After an alert, only the camera tells whether the person is still there.
+            presence = self.last_person_seen is not None and now - self.last_person_seen < ALERT_CLEAR_SECONDS
+            check = self.faces.snapshot()["face_check"]
+            face_failed = self.face_start_failed or bool(check and check["state"] in ("refused", "disabled"))
+            phase = self.access.update(now, motion, face or badge, presence, face_failed)
+            if phase:
+                self.on_access_phase(phase, "badge" if badge else "visage")
+                last_recognised_at = 0.0
             if not self.mqtt_connected:
                 continue
-            now = time.monotonic()
-            # None (no face in view, e.g. head turned) keeps the box's last answer.
-            recognised = self.faces.main_face_authenticated()
-            if recognised is not None and (recognised != was_recognised or now - last_recognised >= RECOGNISED_REPEAT):
-                self.publish_vision({"reconnu": recognised})
-                last_recognised, was_recognised = now, recognised
-            check = check_message(self.faces.snapshot()["face_check"])
-            if check and (check != last_check or now - last_check_at >= CHECK_REPEAT):
-                self.publish_vision(check)
-                last_check_at = now
-            last_check = check
+            if self.access.phase == "reconnu" and now - last_recognised_at >= RECOGNISED_REPEAT:
+                self.publish_vision({"reconnu": True})
+                last_recognised_at = now
+            # The box keeps its LED red while it receives this, i.e. until the person has left.
+            if self.access.phase == "alerte" and now - last_alert_at >= SCREEN_REPEAT:
+                self.publish_vision({"alerte": True})
+                last_alert_at = now
+            screen = self.access.screen(now, self.faces.snapshot()["face_check"])
+            if screen and (screen != last_screen or now - last_screen_at >= SCREEN_REPEAT):
+                self.publish_vision(screen)
+                last_screen_at = now
+            last_screen = screen
+
+    def on_access_phase(self, phase, means):
+        if phase in ("visage", "veille"):
+            # A badge accepted earlier no longer labels whoever comes next.
+            self.badge_person = None
+        if phase == "visage":
+            self.log("INFO", "Mouvement détecté : vérification d'accès démarrée")
+            self.publish_vision({"reconnu": False})
+            try:
+                self.faces.start_check(auto=True)
+                self.face_start_failed = False
+            except FaceError as error:
+                # No face enrolled, model not ready... : straight to the badge.
+                self.log("INFO", f"Vérification faciale impossible : {error}")
+                self.face_start_failed = True
+        elif phase == "badge":
+            self.log("INFO", "Visage non reconnu : présentation du badge demandée")
+        elif phase == "alerte":
+            self.log("ALERTE", "Personne non identifiée (ni visage ni badge) : alerte envoyée")
+            self.send_alert()
+        elif phase == "veille" and self.access.alerted:
+            self.log("INFO", "Personne sortie du champ de la caméra : fin de l'alerte")
+        elif phase == "reconnu":
+            self.log("INFO", f"Accès accepté par {means}")
 
     def publish_vision(self, message):
-        self.mqtt.publish(f"{MQTT_BASE_TOPIC}/vision", json.dumps(message))
+        if self.mqtt_connected:
+            self.mqtt.publish(f"{MQTT_BASE_TOPIC}/vision", json.dumps(message))
+
+    def send_alert(self):
+        with self.lock:
+            people = self.state["personnes"]
+        body = json.dumps({"source": "vision", "type": "intrusion", "level": "critical",
+                           "value": {"personnes": people},
+                           "timestamp": datetime.now().astimezone().isoformat(timespec="seconds")}).encode()
+
+        def post():
+            request = urllib.request.Request(f"{BACKEND_URL}/api/v1/alerts", body, {"Content-Type": "application/json"})
+            try:
+                urllib.request.urlopen(request, timeout=5).close()
+            except OSError as error:
+                self.log("ERREUR", f"Alerte non transmise au backend : {error}")
+
+        threading.Thread(target=post, daemon=True).start()
 
     def unavailable(self, message):
         with self.lock:
@@ -235,7 +319,7 @@ class VisionRuntime:
                         if camera is not None:
                             camera.release()
                             camera = None
-                            self.log("INFO", f"Caméra en veille ({STANDBY_SECONDS:.0f} s sans présence)")
+                            self.log("INFO", "Caméra en veille")
                         self.capture_buffer.invalidate()
                         self.unavailable("Caméra en veille : aucune présence détectée.")
                         with self.lock:
@@ -248,7 +332,7 @@ class VisionRuntime:
                     asleep = False
                     with self.lock:
                         self.state["veille"] = False
-                    self.log("INFO", "Mouvement détecté : caméra allumée")
+                    self.log("INFO", "Caméra allumée")
                 if self.camera_switch.is_set():
                     self.camera_switch.clear()
                     if camera is not None:
@@ -318,7 +402,8 @@ class VisionRuntime:
             image = cv2.resize(original, (640, 480))
             faces, check = self.faces.overlay(generation)
             scale = (640 / original.shape[1], 480 / original.shape[0])
-            image = reader.annotate(image, boxes, observations, authenticated_people(boxes, faces, scale))
+            image = reader.annotate(image, boxes, observations, authenticated_people(boxes, faces, scale),
+                                    self.badge_label(boxes))
             image = annotate_faces(image, faces, check, scale, reader.font)
             if fresh:
                 cv2.putText(image, f"Personnes : {len(boxes)} | YOLO : {overlay['latency']:.0f} ms", (10, 470),
@@ -340,7 +425,7 @@ class VisionRuntime:
                 self.output_changed.notify_all()
 
     def run(self):
-        capture_thread = face_thread = render_thread = report_thread = None
+        capture_thread = face_thread = render_thread = access_thread = None
         try:
             self.start_mqtt()
             os.environ.setdefault("YOLO_CONFIG_DIR", str(ROOT.parent / ".venv" / "yolo-config"))
@@ -355,8 +440,8 @@ class VisionRuntime:
             face_thread.start()
             render_thread = threading.Thread(target=self.render, args=(reader,), daemon=True)
             render_thread.start()
-            report_thread = threading.Thread(target=self.report_to_box, daemon=True)
-            report_thread.start()
+            access_thread = threading.Thread(target=self.supervise_access, daemon=True)
+            access_thread.start()
             sequence = 0
             generation = -1
             had_person = False
@@ -383,12 +468,18 @@ class VisionRuntime:
                 if len(polygons):
                     polygons = polygons * (640 / original.shape[1], 480 / original.shape[0])
                 observations = associate_codes(payloads, polygons, boxes, self.store)
+                for observation in observations:
+                    if observation["result"] == "valid":
+                        employee = observation["employee"]
+                        self.badge_valid_at = time.monotonic()
+                        self.badge_person = {"name": f"{employee['first_name']} {employee['last_name']}",
+                                             "at": self.badge_valid_at}
                 if self.stop.is_set() or not self.capture_buffer.current(generation):
                     continue
                 detected = bool(boxes)
                 clock = time.monotonic()
                 if detected:
-                    self.last_presence = clock
+                    self.last_presence = self.last_person_seen = clock
                 if detected != had_person and clock - last_presence_event >= 2:
                     self.log("INFO", "Présence détectée" if detected else "Zone libre")
                     last_presence_event = clock
@@ -413,7 +504,7 @@ class VisionRuntime:
             self.stop.set()
             if self.mqtt is not None:
                 self.mqtt.loop_stop()
-            for thread in (capture_thread, face_thread, render_thread, report_thread):
+            for thread in (capture_thread, face_thread, render_thread, access_thread):
                 if thread is not None:
                     thread.join(timeout=5)
             if self.stop.is_set():
@@ -448,7 +539,7 @@ def create_app(data_directory=None):
     runtime = VisionRuntime(store)
     app.extensions["badge_store"] = store
     app.extensions["vision"] = runtime
-    app.register_blueprint(create_badge_api(store, lambda: runtime.snapshot(private=True)))
+    app.register_blueprint(create_badge_api(store, runtime.supervision_status))
     app.register_blueprint(create_face_api(store, runtime.faces))
 
     @app.after_request

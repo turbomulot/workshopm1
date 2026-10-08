@@ -19,15 +19,27 @@ Le journal de présence du serveur indique désormais « présence détectée »
 
 ## Lien avec le boîtier ESP8266 (MQTT)
 
-Le serveur écoute le PIR du boîtier sur `sentinel/sensors` (champ `pir`). La caméra s'allume au premier mouvement et se met en veille après 30 s sans mouvement ni personne vue par YOLO ; `/status` indique alors `"veille": true` et `/video` affiche « Camera en veille ». Une vérification faciale réussie reste valable 30 min (`FACE_AUTH_MINUTES`) : pendant ce délai, le même employé est reconnu par son visage seul, sans refaire les gestes. Le serveur publie sur `sentinel/vision` (sans nom) `{"reconnu": true}` quand le visage principal devant la caméra est celui d'un employé authentifié, `{"reconnu": false}` pour toute autre personne, à chaque changement puis toutes les 5 s : le boîtier passe sa LED au vert ou la laisse au rouge. Une autre personne doit passer sa propre vérification.
+Un nouveau mouvement du PIR (`sentinel/sensors`, champ `pir` qui passe de 0 à 1) lance une séquence de contrôle d'accès (`access_session.py`) :
 
-Pendant la vérification faciale, le serveur publie aussi chaque seconde l'étape en cours sur `sentinel/vision` (`{"verification": "left", "etape": 2, "total": 5, "restant": 8}`), puis le résultat (`{"verification": "valid" | "refused" | "disabled"}`). L'écran OLED du boîtier affiche la consigne à la place des mesures, et revient aux mesures 2,5 s après le dernier message.
+1. **Positions** : la caméra s'allume, la LED est rouge. Trois positions sont tirées au hasard parmi quatre (tête à gauche, tête à droite, menton levé, menton baissé) et affichées une par une sur l'écran OLED du boîtier. La personne a **6 s par position**, soit 18 s au total. Le visage est identifié au début de la première position.
+2. **Badge** : position manquée ou visage inconnu, l'écran demande le badge QR, avec **15 s** pour le présenter.
+3. **Alerte** : ni visage ni badge, une alerte `intrusion` (niveau `critical`) est envoyée au backend (`POST /api/v1/alerts`), la LED reste rouge et l'écran affiche « ALERTE ENVOYEE » **tant que la personne est dans le champ de la caméra** (`{"alerte": true}` répété chaque seconde). Quand elle n'est plus vue pendant 3 s (`ACCESS_ALERT_CLEAR_S`), l'alerte se termine et la caméra se met en veille.
+4. **Accès accepté** (visage ou badge valide, à tout moment) : LED verte, « ACCES ACCEPTE » à l'écran, caméra en veille 20 s plus tard. Après un badge accepté, le rectangle de la personne passe de « présence non authentifiée » à « Personne authentifiée (badge) : Prénom Nom », même badge rangé, tant qu'elle est seule dans l'image et jusqu'à la détection suivante.
+
+Sur la page **Employés & badges** du dashboard (une fois la clé superviseur saisie), la caméra s'allume directement, sans attendre le PIR, et reste allumée tant que la page est ouverte.
+
+Une vérification faciale réussie reste valable **1 minute** (`ACCESS_VALID_S`) : si la même personne repasse devant le capteur pendant ce délai, son visage suffit et la LED passe au vert sans les positions. Un badge, lui, ne vaut que pour le passage en cours : à la détection suivante, la personne refait la séquence et présente de nouveau son badge. Passé ce délai, ou pour une autre personne, la séquence complète recommence. Les messages vers le boîtier passent par `sentinel/vision`, sans aucun nom : `{"reconnu": true|false}` pour la LED, `{"verification": "left", "etape": 2, "total": 3, "restant": 4}`, `"badge"`, `"alerte"` ou `"valid"` pour l'écran, répétés chaque seconde.
 
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `MQTT_HOST` / `MQTT_PORT` | `localhost` / `1883` | Broker MQTT |
 | `MQTT_BASE_TOPIC` | `sentinel` | Racine des topics |
-| `CAMERA_STANDBY_S` | `30` | Délai avant veille ; `0` laisse la caméra toujours allumée |
+| `FACE_POSITION_S` | `6` | Temps pour chaque position |
+| `ACCESS_BADGE_S` | `15` | Temps pour présenter le badge |
+| `ACCESS_VALID_S` | `60` | Durée pendant laquelle un accès accepté dispense des positions |
+| `ACCESS_RECOGNISED_S` | `20` | Caméra encore allumée après une reconnaissance |
+| `CAMERA_STANDBY_S` | `30` | Après une alerte, veille après ce délai sans présence ; `0` laisse la caméra toujours allumée |
+| `BACKEND_URL` | `http://localhost:3000` | Backend qui enregistre les alertes |
 
 Sans broker joignable, la caméra reste allumée en permanence, comme avant.
 

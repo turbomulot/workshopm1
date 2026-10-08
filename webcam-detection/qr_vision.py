@@ -68,14 +68,16 @@ class QRVision:
                 return [payload], polygon.reshape(1, 4, 2)
         return [], []
 
-    def annotate(self, image, boxes, observations, face_people=None):
-        """face_people: {person index: name} authenticated by face, which then needs no badge."""
+    def annotate(self, image, boxes, observations, face_people=None, badge_people=None):
+        """face_people: {person index: name} authenticated by face, which then needs no badge.
+        badge_people: {person index: name} authenticated by a badge accepted earlier and put away since."""
         if not len(boxes):
             return image
         canvas = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(canvas)
         labels = {item["person_index"]: item for item in observations if item["association"] == "clear"}
         face_people = face_people or {}
+        badge_people = badge_people or {}
         for index, (x1, y1, x2, y2) in enumerate(boxes):
             color = "#fab219"
             label = f"Personne {index + 1} - présence non authentifiée"
@@ -86,11 +88,14 @@ class QRVision:
             elif item:
                 if item["result"] == "valid":
                     employee = item["employee"]
-                    label = f"Badge : {employee['first_name']} {employee['last_name']}"
+                    label = f"Personne authentifiée (badge) : {employee['first_name']} {employee['last_name']}"
                     color = "#2fb344"
                 else:
                     label = "Badge désactivé" if item["result"] == "disabled" else "Badge inconnu"
                     color = "#e5484d"
+            elif index in badge_people:
+                label = f"Personne authentifiée (badge) : {badge_people[index]}"
+                color = "#2fb344"
             draw.rectangle((x1, y1, x2, y2), outline=color, width=2)
             while len(label) > 4 and draw.textbbox((0, 0), label, font=self.font)[2] > canvas.width - 12:
                 label = label[:-4] + "..."
