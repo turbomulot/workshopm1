@@ -163,19 +163,19 @@ class VisionRuntime:
         return self.last_presence is not None and time.monotonic() - self.last_presence < STANDBY_SECONDS
 
     def report_to_box(self):
-        """Sends the box the face check steps (OLED) and a passed check (green LED).
-        No name leaves this service."""
-        last_recognised, was_recognised = 0.0, False
+        """Sends the box the face check steps (OLED) and whether the face in front of the
+        camera passed a check in the last 30 min (green LED) or not (red). No name is sent."""
+        last_recognised, was_recognised = 0.0, None
         last_check, last_check_at = None, 0.0
         while not self.stop.wait(0.2):
             if not self.mqtt_connected:
                 continue
             now = time.monotonic()
-            recognised = self.faces.any_authenticated()
-            if recognised and (not was_recognised or now - last_recognised >= RECOGNISED_REPEAT):
-                self.publish_vision({"reconnu": True})
-                last_recognised = now
-            was_recognised = recognised
+            # None (no face in view, e.g. head turned) keeps the box's last answer.
+            recognised = self.faces.main_face_authenticated()
+            if recognised is not None and (recognised != was_recognised or now - last_recognised >= RECOGNISED_REPEAT):
+                self.publish_vision({"reconnu": recognised})
+                last_recognised, was_recognised = now, recognised
             check = check_message(self.faces.snapshot()["face_check"])
             if check and (check != last_check or now - last_check_at >= CHECK_REPEAT):
                 self.publish_vision(check)

@@ -217,7 +217,11 @@ class FaceTests(unittest.TestCase):
         self.auto_start()
         for face in LIVE:
             self.show(face)
-        self.faces.authenticated[camille["id"]]["seen"] -= faces.AUTH_GRACE + 1
+        # Out of view, the authentication holds: the same face is recognised without gestures.
+        self.show()
+        self.show(FakeFace(1))
+        self.assertTrue(self.faces.main_face_authenticated())
+        self.faces.authenticated[camille["id"]]["since"] -= faces.AUTH_MAX + 1
         self.show()
         self.assertEqual(self.faces.authenticated, {})
         self.faces.result = None
@@ -225,6 +229,25 @@ class FaceTests(unittest.TestCase):
         self.assertFalse(self.faces.snapshot()["faces"][0]["authenticated"])
         self.faces.stable = (None, 0)
         self.assertEqual(self.auto_start()["state"], "running")
+
+    def test_other_person_is_not_green_and_needs_their_own_check(self):
+        camille = self.employee()
+        self.enroll(camille, 1)
+        self.auto_start()
+        for face in LIVE:
+            self.show(face)
+        self.faces.result = None
+        self.show(FakeFace(1))
+        self.assertTrue(self.faces.main_face_authenticated())
+        self.show()
+        self.assertIsNone(self.faces.main_face_authenticated())
+        self.show(FakeFace(99))
+        self.assertFalse(self.faces.main_face_authenticated())
+        alex = self.employee("Alex", "Test")
+        self.enroll(alex, 2)
+        self.faces.stable = (None, 0)
+        self.assertFalse(self.faces.main_face_authenticated())
+        self.assertEqual(self.auto_start(seed=2)["state"], "running")
 
     def test_failed_auto_check_waits_for_cooldown(self):
         camille = self.employee()

@@ -43,8 +43,9 @@ THREADS = int(os.environ.get("FACE_THREADS", "2"))
 # its success authenticates them without a badge.
 AUTO_CHECK = os.environ.get("FACE_AUTO_CHECK", "1") != "0"
 RETRY_COOLDOWN = 10.0    # no automatic check for this employee after a failure
-AUTH_GRACE = 5.0         # authentication lost when the face is out of view this long
-AUTH_MAX = 120.0         # and in any case after this long: a new check is needed
+# A passed check stays valid this long, even out of view: the same employee coming
+# back is recognised by face alone, without the gestures.
+AUTH_MAX = float(os.environ.get("FACE_AUTH_MINUTES", "30")) * 60
 ANALYSIS_WIDTH = 640
 FRESH_SECONDS = 1.0
 
@@ -156,10 +157,14 @@ class FaceRecognizer:
                     "faces": [{"authenticated": False, **{k: v for k, v in face.items() if k != "bbox"}} for face in faces],
                     "face_check": self.check_view(now)}
 
-    def any_authenticated(self):
-        """True while an employee who passed the check is still in view (AUTH_GRACE)."""
+    def main_face_authenticated(self):
+        """For the largest face in view: True if its employee passed the check within
+        AUTH_MAX, False for anyone else, None when no face is in view."""
         with self.lock:
-            return bool(self.authenticated)
+            if time.monotonic() - self.faces_at > FRESH_SECONDS or not self.faces:
+                return None
+            area = lambda face: (face["bbox"][2] - face["bbox"][0]) * (face["bbox"][3] - face["bbox"][1])
+            return bool(max(self.faces, key=area).get("authenticated"))
 
     def overlay(self, generation):
         now = time.monotonic()
@@ -318,7 +323,7 @@ class FaceRecognizer:
                               "disabled": "Vérification faciale : fiche désactivée"}.get(result, "Vérification faciale refusée"))
 
     def refresh_authenticated(self, faces, now):
-        """Under the lock: keep authentications whose face is still in view, flag those faces."""
+        """Under the lock: drop expired authentications, flag the authenticated faces in view."""
         for face in faces:
             entry = self.authenticated.get(face["employee_id"])
             face["authenticated"] = bool(entry) and face["active"]
@@ -326,7 +331,7 @@ class FaceRecognizer:
                 entry["seen"] = now
         for employee_id, entry in list(self.authenticated.items()):
             active = self.gallery.get(employee_id, (None, None, False))[2]
-            if not active or now - entry["seen"] > AUTH_GRACE or now - entry["since"] > AUTH_MAX:
+            if not active or now - entry["since"] > AUTH_MAX:
                 del self.authenticated[employee_id]
 
     def auto_start(self, main, now):
