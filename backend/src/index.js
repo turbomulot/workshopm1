@@ -7,7 +7,8 @@ import * as db from './db.js'
 import { startMqtt } from './mqtt.js'
 import { createRoutes } from './routes.js'
 
-const ALERT_TYPES = ['gas', 'motion', 'temp']
+// temp_rise : +3 °C en une minute ; fire : gaz et température qui montent ensemble.
+const ALERT_TYPES = ['gas', 'motion', 'temp', 'temp_rise', 'fire']
 const ALERT_LEVELS = ['info', 'warn', 'critical']
 
 const app = express()

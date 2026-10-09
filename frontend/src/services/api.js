@@ -106,7 +106,7 @@ function toReading(measurement) {
 }
 
 // Le backend nomme les capteurs et les niveaux à sa façon.
-const SENSOR_NAMES = { temp: 'temperature', hum: 'humidity', gas: 'gas', motion: 'motion' }
+const SENSOR_NAMES = { temp: 'temperature', hum: 'humidity', gas: 'gas', motion: 'motion', temp_rise: 'temperature_rise' }
 const LEVEL_NAMES = { info: 'info', warn: 'warning', critical: 'critical' }
 
 const SENSOR_MESSAGES = {
@@ -114,8 +114,10 @@ const SENSOR_MESSAGES = {
   humidity: { warning: 'High humidity level', critical: 'Critical humidity level' },
   gas: { warning: 'Abnormal gas level', critical: 'High gas level detected' },
   motion: { info: 'Zone clear', warning: 'Motion detected', critical: 'Motion detected' },
+  temperature_rise: { critical: 'Rapid temperature rise' },
+  fire: { critical: 'Fire risk: gas and temperature rising together' },
 }
-const SENSOR_UNITS = { temperature: '°C', humidity: '%', gas: GAS_UNIT }
+const SENSOR_UNITS = { temperature: '°C', humidity: '%', gas: GAS_UNIT, temperature_rise: '°C', fire: GAS_UNIT }
 
 // Le backend n'envoie pas de phrase : on la construit à partir du type et de la valeur.
 function describeAlert(source, type, level, value) {

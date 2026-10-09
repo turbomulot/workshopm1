@@ -25,9 +25,9 @@ D3 et D4 sont des broches de démarrage : si l'ESP démarre mal, déplacer le bu
 | Topic | Sens | Contenu |
 |---|---|---|
 | `sensors` | ESP → broker, toutes les 2 s | `{temp, hum, gas, pir, ts}` (`null` si capteur en erreur) |
-| `alerts` | ESP → broker | `{type: "motion" \| "gas", level, value}` |
+| `alerts` | ESP → broker | `{type: "motion" \| "gas" \| "temp_rise" \| "fire", level, value}` (`temp_rise` : hausse en °C ; `fire` : valeur du gaz) |
 | `status` | ESP → broker | `online`, ou `offline` publié par le broker (Last Will) |
 | `cmd` | dashboard → ESP | `{buzzer: bool, led: "red" \| "green" \| "off"}` |
 | `vision` | service caméra → ESP | `{reconnu}` (LED), `{alerte: true}` (LED rouge maintenue), `{verification, etape, total, restant}` (écran) |
 
-Comportement local, même sans broker : gaz > 700 = buzzer continu et LED rouge, gaz > 400 = bip toutes les 2 s. Aucune alerte pendant la première minute (préchauffage du MQ-2 et du PIR). La séquence de contrôle d'accès est décrite dans le [README du module vision](../webcam-detection/README.md).
+Comportement local, même sans broker : gaz > 700 = buzzer continu et LED rouge, gaz > 400 = bip toutes les 2 s. Hausse de température de 3 °C ou plus en moins d'1 minute = bip rapide (500 ms chaque seconde) et alerte `temp_rise` de niveau `critical` ; l'alarme s'arrête environ 1 minute après la fin de la hausse. Gaz qui monte de 100 points ou plus **et** température qui monte de 3 °C ou plus dans la même minute = alerte `fire` (`critical`) : buzzer continu, LED rouge et écran « ALERTE INCENDIE », prioritaire sur les autres écrans. Aucune alerte pendant la première minute (préchauffage du MQ-2 et du PIR). La séquence de contrôle d'accès est décrite dans le [README du module vision](../webcam-detection/README.md).

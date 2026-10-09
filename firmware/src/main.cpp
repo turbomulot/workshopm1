@@ -73,6 +73,28 @@ int restantVerif = 0;
 unsigned long derniereVerif = 0;
 
 int niveauGaz = 0; // 0 normal, 1 warn, 2 critical
+
+// Hausses rapides : mesure actuelle comparée à son minimum de la dernière minute.
+const unsigned long FENETRE_HAUSSE = 60000;
+const int NB_MESURES_HAUSSE = FENETRE_HAUSSE / INTERVALLE_ENVOI;
+struct Historique {
+  float valeurs[NB_MESURES_HAUSSE];
+  int index = 0;
+  int nb = 0;
+};
+Historique historiqueTemp;
+Historique historiqueGaz;
+
+// Température : +3 °C en une minute (appareil qui chauffe, début d'incendie) = bip rapide.
+const float HAUSSE_TEMP_ALERTE = 3.0;
+bool alarmeTemperature = false;
+// Gaz + température qui montent ensemble = risque d'incendie : buzzer continu, LED rouge,
+// écran « ALERTE INCENDIE ». Hausse de gaz en points du capteur MQ-2 (0 à 1023).
+const int HAUSSE_GAZ_ALERTE = 100;
+bool alarmeIncendie = false;
+// Bip rapide, distinct du gaz : 500 ms toutes les secondes.
+const unsigned long PERIODE_BIP_TEMP = 1000;
+const unsigned long DUREE_BIP_TEMP = 500;
 int dernierPIR = LOW;
 // 0 tant qu'aucune présence n'a été vue depuis la fin du préchauffage.
 unsigned long dernierePresence = 0;
@@ -89,10 +111,11 @@ void appliquerSorties() {
   if (!presence) personneReconnue = false;
   bool bipWarning = niveauGaz == 1 && maintenant % PERIODE_BIP < DUREE_BIP;
 
-  bool buzzer = buzzerCommande || niveauGaz == 2 || bipWarning;
+  bool bipTemperature = alarmeTemperature && maintenant % PERIODE_BIP_TEMP < DUREE_BIP_TEMP;
+  bool buzzer = buzzerCommande || niveauGaz == 2 || alarmeIncendie || bipWarning || bipTemperature;
   EtatLed led = ledCommande;
   bool alerteVision = derniereAlerteVision != 0 && maintenant - derniereAlerteVision < DUREE_ALERTE_VISION;
-  if (niveauGaz == 2 || alerteVision) led = LED_ROUGE;
+  if (niveauGaz == 2 || alarmeIncendie || alerteVision) led = LED_ROUGE;
   else if (presence) led = personneReconnue ? LED_VERTE : LED_ROUGE;
   digitalWrite(brocheBuzzer, buzzer ? HIGH : LOW);
   digitalWrite(brocheLedRouge, led == LED_ROUGE ? HIGH : LOW);
@@ -126,6 +149,8 @@ const char* titreVerification() {
 }
 
 void afficherVerification() {
+  // L'alerte incendie garde l'écran.
+  if (alarmeIncendie) return;
   display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 0);
@@ -215,12 +240,35 @@ void publier(const char* topic, JsonDocument& doc) {
   }
 }
 
-void publierAlerte(const char* type, const char* level, int value) {
+void publierAlerte(const char* type, const char* level, float value) {
   StaticJsonDocument<100> docAlerte;
   docAlerte["type"] = type;
   docAlerte["level"] = level;
   docAlerte["value"] = value;
   publier(TOPIC_ALERTS, docAlerte);
+}
+
+// Hausse de la mesure par rapport à son minimum sur la dernière minute (0 sans mesure valide).
+float hausse(Historique& historique, float mesure) {
+  if (isnan(mesure)) return 0;
+  historique.valeurs[historique.index] = mesure;
+  historique.index = (historique.index + 1) % NB_MESURES_HAUSSE;
+  if (historique.nb < NB_MESURES_HAUSSE) historique.nb++;
+  float minimum = mesure;
+  for (int i = 0; i < historique.nb; i++) minimum = min(minimum, historique.valeurs[i]);
+  return mesure - minimum;
+}
+
+void afficherIncendie() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Gaz et temperature");
+  display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
+  display.setTextSize(2);
+  display.setCursor(0, 18);
+  display.print("ALERTE\nINCENDIE");
+  display.display();
 }
 
 // Niveau de gaz avec hystérésis : on monte au seuil, on redescend 50 points plus bas.
@@ -295,6 +343,9 @@ void loop() {
   int etatPIR = digitalRead(brochePIR);
   time_t maintenant = time(nullptr);
   bool prechauffage = tempsActuel < DUREE_PRECHAUFFAGE;
+  // Calculée aussi pendant le préchauffage, pour que la minute d'historique soit déjà remplie.
+  float hausseTemp = hausse(historiqueTemp, temperature);
+  float hausseGaz = hausse(historiqueGaz, valeurGaz);
 
   // null plutôt que 0 : le backend distingue un capteur en panne d'une vraie mesure.
   StaticJsonDocument<200> docSensors;
@@ -319,9 +370,26 @@ void loop() {
       publierAlerte("gas", nouveauNiveau == 2 ? "critical" : "warn", valeurGaz);
     }
     niveauGaz = nouveauNiveau;
+
+    // Les alarmes cessent d'elles-mêmes une minute après la fin de la hausse.
+    bool hausseRapide = hausseTemp >= HAUSSE_TEMP_ALERTE;
+    if (hausseRapide && !alarmeTemperature) {
+      publierAlerte("temp_rise", "critical", round(hausseTemp * 10) / 10.0);
+    }
+    alarmeTemperature = hausseRapide;
+
+    bool incendie = hausseRapide && hausseGaz >= HAUSSE_GAZ_ALERTE;
+    if (incendie && !alarmeIncendie) {
+      publierAlerte("fire", "critical", valeurGaz);
+    }
+    alarmeIncendie = incendie;
   }
   dernierPIR = etatPIR;
 
+  if (alarmeIncendie) {
+    afficherIncendie();
+    return;
+  }
   // Pendant une vérification faciale, l'écran garde ses consignes.
   if (verificationAffichee()) return;
 
