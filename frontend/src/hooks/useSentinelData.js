@@ -21,11 +21,16 @@ export function useSentinelData() {
   const [device, setDevice] = useState(null)
   const [connected, setConnected] = useState(false)
 
+  // Le polling et le socket.io peuvent livrer la même mesure, ou une mesure plus
+  // ancienne que la dernière reçue (réponse HTTP en retard) : on ne garde que ce
+  // qui est plus récent, pour que l'historique reste trié et sans doublon.
   const addReading = useCallback((reading) => {
-    setLatest(reading)
+    setLatest((previous) =>
+      previous && new Date(reading.timestamp) < new Date(previous.timestamp) ? previous : reading
+    )
     setHistory((previous) => {
       const last = previous[previous.length - 1]
-      if (last && last.timestamp === reading.timestamp) return previous
+      if (last && new Date(reading.timestamp) <= new Date(last.timestamp)) return previous
       return [...previous, reading].slice(-HISTORY_LENGTH)
     })
   }, [])

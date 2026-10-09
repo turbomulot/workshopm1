@@ -1,0 +1,27 @@
+# ============================================================
+# Sentinel-X — ACL Mosquitto
+# Chaque compte n'a accès qu'à ses propres topics.
+# MODÈLE : security/mosquitto/make-accounts.sh génère le fichier "acl" en
+# remplaçant g<n> (compte) et <base> (racine des topics, ex. sentinel).
+# Ne pas modifier "acl" à la main.
+# ============================================================
+
+# --- Le boîtier ESP8266 : publie mesures, alertes et statut ; lit ses commandes ---
+user esp-g<n>
+topic write <base>/sensors
+topic write <base>/alerts
+topic write <base>/status
+topic read  <base>/cmd
+topic read  <base>/vision
+
+# --- Le service caméra : lit les mesures (PIR), pilote l'écran et les LED du boîtier ---
+# Seul ce compte peut écrire sur <base>/vision : personne d'autre ne peut faire
+# afficher « reconnu » au boîtier.
+user vision
+topic read  <base>/sensors
+topic write <base>/vision
+
+# --- Le backend : lit tout, envoie les commandes ---
+user api
+topic read  <base>/#
+topic write <base>/cmd

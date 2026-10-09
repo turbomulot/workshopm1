@@ -1,3 +1,4 @@
+import sys
 import time
 import cv2
 
@@ -6,7 +7,8 @@ import cv2
 # Si tu as aussi une webcam USB branchée, elle peut être l'index 1.
 INDEX_CAMERA = 0
 
-camera = cv2.VideoCapture(INDEX_CAMERA, cv2.CAP_AVFOUNDATION)
+backend_camera = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
+camera = cv2.VideoCapture(INDEX_CAMERA, backend_camera)
 
 if not camera.isOpened():
     print("Impossible d'ouvrir la caméra.")

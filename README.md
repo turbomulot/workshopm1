@@ -2,10 +2,16 @@
 
 Workshop EPSI Bac+4 2026-27.
 
-## Contenu du dépôt
+- `frontend/` : dashboard (React + Vite)
+- `backend/` : API capteurs, MQTT → PostgreSQL (Node.js)
+- `webcam-detection/` : détection YOLO et badges QR (Python)
+- `firmware/` : ESP8266 (PlatformIO)
+- `security/` : PKI, Mosquitto, durcissement
 
-| Dossier | Contenu |
-| --- | --- |
-| [frontend/](frontend/) | Dashboard de supervision (React + Vite) |
+## Lancer
 
-Voir le README de chaque dossier pour l'installation et le lancement.
+```bash
+cd backend && cp .env.example .env && docker compose up -d --build
+cd frontend && cp .env.example .env && npm install && npm run dev
+cd webcam-detection && pip install -r requirements.txt && python stream_detection.py
+```
